@@ -1,0 +1,38 @@
+#pragma once
+#include <variant>
+#include <string>
+
+// BasicValue is a universal container for any value in our language.
+// It can hold either a boolean or a floating-point number.
+using BasicValue = std::variant<bool, double>;
+
+//==============================================================================
+// HELPER FUNCTIONS
+// We define them here as 'inline' so they can be used across
+// multiple .cpp files without causing linker errors.
+//==============================================================================
+
+// Helper to convert a BasicValue to a double for math operations.
+// This is called "coercion". It treats booleans as 1.0 or 0.0.
+inline double to_double(const BasicValue& val) {
+    if (std::holds_alternative<double>(val)) {
+        return std::get<double>(val);
+    }
+    if (std::holds_alternative<bool>(val)) {
+        return std::get<bool>(val) ? 1.0 : 0.0;
+    }
+    return 0.0;
+}
+
+// Helper to convert a BasicValue to a boolean for logic operations.
+// It treats any non-zero number as true.
+inline bool to_bool(const BasicValue& val) {
+    if (std::holds_alternative<bool>(val)) {
+        return std::get<bool>(val);
+    }
+    if (std::holds_alternative<double>(val)) {
+        return std::get<double>(val) != 0.0;
+    }
+    return false;
+}
+
