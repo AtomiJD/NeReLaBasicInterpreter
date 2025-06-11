@@ -59,9 +59,12 @@ namespace Tokens {
         LONG = 0x31,
         FLOAT = 0x32,
         DOUBLE = 0x33,
-        ARRAY = 0x34,
+        ARRAY_ACCESS = 0x34,
         STRVAR = 0x35,
         C_APOSTROPHE = 0x36,
+        C_NE = 0x37, // Not Equal <> (use any available code)
+        C_LE = 0x38, // Less than or Equal <=
+        C_GE = 0x39, // Greater than or Equal >=
         L_FAST = 0xAE,
         L_BYTE = 0xAF,
         L_INT = 0xB0,
@@ -124,6 +127,8 @@ namespace Tokens {
         PSGENV = 0xE0,
         PSGVOL = 0xE1,
         PSGSTOP = 0xE2,
+        FUNCREF = 0xE3,
+        REM = 0xE4,
         LIST = 0x70,
         RUN = 0x71,
         EDIT = 0x72,

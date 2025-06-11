@@ -1,11 +1,19 @@
-i = 0
-i = i + 1
-print " atomi: "; i
-i = i + 1
-print i
-print " Heinz "; i
-i = i + 1
-print " Bert "; i
-i = i + 1
-print " Lall "; i
+func apply(fa(),cc)
+    return fa(cc,2)
+endfunc
+
+func luli()
+    print "atomi rockt"
+    return 0
+endfunc
+
+
+a="Atomi"
+
+print apply(left$@,a)
+
+print apply(RIGHT$@,a)
+
+luli()
+
 

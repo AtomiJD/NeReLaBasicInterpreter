@@ -23,6 +23,7 @@ namespace {
         {"SAVE",     Tokens::ID::SAVE},
         {"LOAD",    Tokens::ID::LOAD},
         {"CLS",     Tokens::ID::CLS},
+        {"DIM",     Tokens::ID::DIM},
         {"FUNC",    Tokens::ID::FUNC},
         {"ENDFUNC", Tokens::ID::ENDFUNC},
         {"FOR",     Tokens::ID::FOR},
@@ -47,6 +48,7 @@ namespace {
         {"INPUT",   Tokens::ID::INPUT},
         {"TRON",    Tokens::ID::TRON},
         {"TROFF",   Tokens::ID::TROFF},
+        {"REM",   Tokens::ID::REM},
         // --- From your cx16_table ---
         {"VPEEK",   Tokens::ID::VPEEK},
         {"VPOKE",   Tokens::ID::VPOKE},

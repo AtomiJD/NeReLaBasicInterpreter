@@ -25,7 +25,7 @@ void TextIO::nl() {
 void TextIO::clearScreen() {
     // This is OS-dependent. For now, a simple simulation.
     // On Windows, you could use: system("cls");
-    std::cout << "\n--- CLS ---\n\n";
+    std::cout << "\x1B[2J\x1B[H";
 }
 
 void TextIO::setColor(uint8_t foreground, uint8_t background) {

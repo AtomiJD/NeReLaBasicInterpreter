@@ -15,7 +15,7 @@ bool StringUtils::isspace(char c) {
 }
 
 bool StringUtils::isletter(char c) {
-    return std::isalpha(static_cast<unsigned char>(c));
+    return std::isalpha(static_cast<unsigned char>(c)); 
 }
 
 bool StringUtils::isdigit(char c) {

@@ -1,18 +1,35 @@
 // Commands.hpp
 #pragma once
+#include "Types.hpp" // For BasicValue
+#include <string>
 
 class NeReLaBasic; // Forward declaration to avoid circular dependencies
 
 namespace Commands {
+    void do_dim(NeReLaBasic& vm);
+    void do_input(NeReLaBasic& vm);
     void do_print(NeReLaBasic& vm);
     void do_let(NeReLaBasic& vm);
     void do_goto(NeReLaBasic& vm);
     void do_if(NeReLaBasic& vm);
     void do_else(NeReLaBasic& vm);
+    void do_for(NeReLaBasic& vm);
+    void do_next(NeReLaBasic& vm);
+
+    void do_func(NeReLaBasic& vm);
+    void do_callfunc(NeReLaBasic& vm);
+    void do_return(NeReLaBasic& vm);
+    void do_endfunc(NeReLaBasic& vm);
 
     void do_list(NeReLaBasic& vm);
     void do_load(NeReLaBasic& vm);
     void do_save(NeReLaBasic& vm);
     void do_run(NeReLaBasic& vm);
-    // We will add do_let(), do_if(), do_goto(), etc. here later.
 }
+
+BasicValue& get_variable(NeReLaBasic& vm, const std::string& name);
+void set_variable(NeReLaBasic& vm, const std::string& name, const BasicValue& value);
+std::string to_string(const BasicValue& val);
+std::string to_upper(std::string s);
+std::string read_string(NeReLaBasic& vm);
+

@@ -2,9 +2,17 @@
 #include <variant>
 #include <string>
 
+// This struct represents a "pointer" or "reference" to a function.
+// We just store the function's name.
+struct FunctionRef {
+    std::string name;
+    // This lets std::variant compare it if needed.
+    bool operator==(const FunctionRef&) const = default;
+};
+
 // BasicValue is a universal container for any value in our language.
 // It can hold either a boolean or a floating-point number.
-using BasicValue = std::variant<bool, double>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef>;
 
 //==============================================================================
 // HELPER FUNCTIONS

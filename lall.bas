@@ -1,5 +1,4 @@
 PRINT "Start"
-
 i = 0
 fluppi:
 i = i + 1
