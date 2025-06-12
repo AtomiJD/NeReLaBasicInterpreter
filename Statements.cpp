@@ -19,13 +19,13 @@ namespace {
         {"LIST",    Tokens::ID::LIST},
         {"RUN",     Tokens::ID::RUN},
         {"EDIT",    Tokens::ID::EDIT},
-        {"DIR",     Tokens::ID::DIR},
         {"SAVE",     Tokens::ID::SAVE},
         {"LOAD",    Tokens::ID::LOAD},
-        {"CLS",     Tokens::ID::CLS},
         {"DIM",     Tokens::ID::DIM},
         {"FUNC",    Tokens::ID::FUNC},
         {"ENDFUNC", Tokens::ID::ENDFUNC},
+        {"SUB",    Tokens::ID::SUB},
+        {"ENDSUB", Tokens::ID::ENDSUB},
         {"FOR",     Tokens::ID::FOR},
         {"IF",      Tokens::ID::IF},
         {"THEN",    Tokens::ID::THEN},
@@ -43,20 +43,14 @@ namespace {
         {"TO",      Tokens::ID::TO},
         {"NEXT",    Tokens::ID::NEXT},
         {"STEP",    Tokens::ID::STEP},
-        {"PEEK",    Tokens::ID::PEEK},
-        {"POKE",    Tokens::ID::POKE},
         {"INPUT",   Tokens::ID::INPUT},
         {"TRON",    Tokens::ID::TRON},
         {"TROFF",   Tokens::ID::TROFF},
+        {"DUMP",    Tokens::ID::DUMP},
+        {"COMPILE", Tokens::ID::COMPILE},
         {"REM",   Tokens::ID::REM},
-        // --- From your cx16_table ---
-        {"VPEEK",   Tokens::ID::VPEEK},
-        {"VPOKE",   Tokens::ID::VPOKE},
         {"COLOR",   Tokens::ID::COLOR},
         {"LOCATE",  Tokens::ID::LOCATE},
-        {"LINE",    Tokens::ID::LINE},
-        {"RECT",    Tokens::ID::RECT},
-        {"CIRCLE",  Tokens::ID::CIRCLE}
         // ... and so on for all your keywords.
     };
 } // end anonymous namespace

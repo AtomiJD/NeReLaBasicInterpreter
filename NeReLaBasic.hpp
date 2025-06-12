@@ -15,22 +15,18 @@ using NativeFunction = std::function<BasicValue(const std::vector<BasicValue>&)>
 class NeReLaBasic {
 public:
     // --- Member Variables (Global State) ---
-    static const uint16_t MEM_END = 0x9EFF;
-    static const uint16_t PROGRAM_START_ADDR = 0xA000;
-
     std::string buffer;
     std::string lineinput;
     std::string filename;
 
     uint16_t prgptr = 0;
     uint16_t pcode = 0;
-    uint16_t pend = 0;
     uint16_t linenr = 0;
 
     uint8_t graphmode = 0;
     uint8_t fgcolor = 5;
     uint8_t bgcolor = 0;
-    uint8_t trace = 1;
+    uint8_t trace = 0;
     uint16_t runtime_current_line = 0;
     uint16_t current_source_line = 0;
 
@@ -44,6 +40,7 @@ public:
     struct FunctionInfo {
         std::string name;
         int arity = 0; // The number of arguments the function takes.
+        bool is_procedure = false;
 
         // For user-defined functions:
         uint16_t start_pcode = 0;
@@ -64,8 +61,11 @@ public:
     };
 
 
-    // Represents the 64KB memory space
-    std::vector<uint8_t> memory;
+    std::string source_code;      // Stores the BASIC program source text
+    std::vector<uint8_t> program_p_code;    // Stores the compiled bytecode for RUN/DUMP
+    std::vector<uint8_t> direct_p_code;     // Temporary buffer for direct-mode commands
+    const std::vector<uint8_t>* active_p_code = nullptr;    //Active P-Code Pointer
+
     std::vector<IfStackInfo> if_stack;
     std::vector<ForLoopInfo> for_stack;
 
@@ -84,7 +84,8 @@ public:
     NeReLaBasic(); // Constructor
     void start();  // The main REPL
     void run_program();
-    void statement();
+    void execute(const std::vector<uint8_t>& code_to_run);
+
 
     // --- New Declarations for Expression Parsing ---
     BasicValue evaluate_expression();
@@ -92,6 +93,8 @@ public:
     BasicValue parse_term();
     BasicValue parse_primary();
     BasicValue parse_factor();
+    uint8_t tokenize_program(std::vector<uint8_t>& out_p_code);
+    void statement();
 
 private:
     void init_basic();
@@ -99,12 +102,9 @@ private:
     void init_screen();
 
     // --- Lexer---
-    Tokens::ID parse();
-    uint8_t tokenize(const std::string& line, uint16_t baseAddress, uint16_t lineNumber);
-    uint8_t tokenize_program();
+    Tokens::ID parse(NeReLaBasic& vm);
+    uint8_t tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code);
 
     // --- Execution Engine ---
     void runl();
-    void discover_functions();
-
 };

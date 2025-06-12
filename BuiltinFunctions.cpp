@@ -1,18 +1,62 @@
 #include "BuiltinFunctions.hpp"
 #include "Commands.hpp"
 #include "NeReLaBasic.hpp"
+#include "TextIO.hpp"
+#include "Error.hpp"
 #include <chrono>
 #include <cmath> // For sin, cos, etc.
 #include <conio.h>
 #include <algorithm>    // For std::transform
 #include <string>       // For std::string, std::to_string
 #include <vector>       // For std::vector
+#include <filesystem>   
+#include <iostream>     
+#include <regex>
+
+namespace fs = std::filesystem;
 
 // We need access to the helper functions for type conversion
 bool to_bool(const BasicValue& val);
 double to_double(const BasicValue& val);
 std::string to_string(const BasicValue& val);
 
+// Converts a simple wildcard string (*, ?) to a valid ECMA-style regex string.
+std::string wildcard_to_regex(const std::string& wildcard) {
+    std::string regex_str;
+    // Anchor the pattern to match the whole string.
+    regex_str += '^';
+    for (char c : wildcard) {
+        switch (c) {
+        case '*':
+            regex_str += ".*"; // * matches any sequence of characters
+            break;
+        case '?':
+            regex_str += '.';  // ? matches any single character
+            break;
+            // Escape special regex characters
+        case '.':
+        case '\\':
+        case '+':
+        case '(':
+        case ')':
+        case '{':
+        case '}':
+        case '[':
+        case ']':
+        case '^':
+        case '$':
+        case '|':
+            regex_str += '\\';
+            regex_str += c;
+            break;
+        default:
+            regex_str += c;
+        }
+    }
+    // Anchor the pattern to match the whole string.
+    regex_str += '$';
+    return regex_str;
+}
 
 //=========================================================
 // C++ Implementations of our Native BASIC Functions
@@ -199,9 +243,111 @@ BasicValue builtin_tick(const std::vector<BasicValue>& args) {
         );
 }
 
+// --- Procedures ---
+BasicValue builtin_cls(const std::vector<BasicValue>& args) {
+    // Procedures can still take arguments, but CLS doesn't need any.
+    // We could add error checking for args.size() if we wanted.
+    TextIO::clearScreen();
+    return false; // Procedures must return something; the value is ignored.
+}
+
+// --- Filesystem ---
+// DIR [path_string]
+BasicValue builtin_dir(const std::vector<BasicValue>& args) {
+    try {
+        fs::path target_path("."); // Default to current directory
+        std::string wildcard = "*";   // Default to all files
+
+        if (!args.empty()) {
+            fs::path full_arg_path(to_string(args[0]));
+            if (full_arg_path.has_filename() && full_arg_path.filename().string().find_first_of("*?") != std::string::npos) {
+                wildcard = full_arg_path.filename().string();
+                target_path = full_arg_path.has_parent_path() ? full_arg_path.parent_path() : ".";
+            }
+            else {
+                target_path = full_arg_path;
+            }
+        }
+
+        if (!fs::exists(target_path) || !fs::is_directory(target_path)) {
+            TextIO::print("Directory not found: " + target_path.string() + "\n");
+            return false;
+        }
+
+        // Create the regex object from our wildcard pattern
+        std::regex pattern(wildcard_to_regex(wildcard), std::regex::icase); // std::regex::icase for case-insensitivity
+
+        for (const auto& entry : fs::directory_iterator(target_path)) {
+            std::string filename_str = entry.path().filename().string();
+
+            // Check if the filename matches our regex pattern
+            if (std::regex_match(filename_str, pattern)) {
+                std::string size_str;
+                if (!entry.is_directory()) {
+                    try {
+                        size_str = std::to_string(fs::file_size(entry));
+                    }
+                    catch (fs::filesystem_error&) {
+                        size_str = "<ERR>";
+                    }
+                }
+                else {
+                    size_str = "<DIR>";
+                }
+
+                TextIO::print(filename_str);
+                int padding_needed = 25 - static_cast<int>(filename_str.length());
+
+                // Only print padding if the filename is shorter than the column width.
+                if (padding_needed > 0) {
+                    for (int i = 0; i < padding_needed; ++i) {
+                        TextIO::print(" ");
+                    }
+                }
+                TextIO::print(size_str + "\n");
+            }
+        }
+    }
+    catch (const std::regex_error& e) {
+        TextIO::print("Invalid wildcard pattern: " + std::string(e.what()) + "\n");
+    }
+    catch (const fs::filesystem_error& e) {
+        TextIO::print("Error accessing directory: " + std::string(e.what()) + "\n");
+    }
+
+    return false; // Procedures return a dummy value
+}
+
+// CD path_string
+BasicValue builtin_cd(const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, 0); // Wrong number of arguments
+        return false;
+    }
+
+    std::string path_str = to_string(args[0]);
+    try {
+        fs::current_path(path_str); // This function changes the current working directory
+        TextIO::print("Current directory is now: " + fs::current_path().string() + "\n");
+    }
+    catch (const fs::filesystem_error& e) {
+        TextIO::print("Error changing directory: " + std::string(e.what()) + "\n");
+    }
+    return false;
+}
+
+// PWD
+BasicValue builtin_pwd(const std::vector<BasicValue>& args) {
+    try {
+        TextIO::print(fs::current_path().string() + "\n");
+    }
+    catch (const fs::filesystem_error& e) {
+        TextIO::print("Error getting current directory: " + std::string(e.what()) + "\n");
+    }
+    return false;
+}
 
 // --- The Registration Function ---
-
 void register_builtin_functions(NeReLaBasic& vm) {
     // Helper lambda to make registration cleaner
     auto register_func = [&](const std::string& name, int arity, NativeFunction func_ptr) {
@@ -234,4 +380,22 @@ void register_builtin_functions(NeReLaBasic& vm) {
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);
 
+
+    // --- Register Procedures ---
+
+    auto register_proc = [&](const std::string& name, int arity, NativeFunction func_ptr) {
+        NeReLaBasic::FunctionInfo info;
+        info.name = name;
+        info.arity = arity;
+        info.native_impl = func_ptr;
+        info.is_procedure = true; // Mark this as a procedure
+        vm.function_table[to_upper(info.name)] = info;
+        };
+
+    // --- Register Methods ---
+    register_proc("CLS", 0, builtin_cls);
+    register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
+    register_proc("CD", 1, builtin_cd);
+    register_proc("PWD", 0, builtin_pwd);
 }
+

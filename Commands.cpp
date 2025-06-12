@@ -1,32 +1,35 @@
 // Commands.cpp
-#include <fstream> 
+#include <fstream>
+#include <sstream>
 #include <algorithm>
+#include <iomanip>
+#include <iostream>
 #include "Commands.hpp"
 #include "NeReLaBasic.hpp" // We need the full class definition here
 #include "TextIO.hpp"
 #include "Tokens.hpp"
 #include "Error.hpp"
 #include "Types.hpp"
-#include <iostream>
 
-//namespace {
-    // Helper to read a 16-bit word from memory (little-endian)
-uint16_t read_word(NeReLaBasic& vm) {
-    uint8_t lsb = vm.memory[vm.pcode++];
-    uint8_t msb = vm.memory[vm.pcode++];
-    return (msb << 8) | lsb;
-}
 
-// Helper to read a null-terminated string from memory
+
+//// Helper to read a 16-bit word from p_code (little-endian)
+//uint16_t read_word(NeReLaBasic& vm) {
+//    uint8_t lsb = (*vm.active_p_code)[vm.pcode++];
+//    uint8_t msb = (*vm.active_p_code)[vm.pcode++];
+//    return (msb << 8) | lsb;
+//}
+
+// Helper to read a null-terminated string from p_code memory
 std::string read_string(NeReLaBasic& vm) {
     std::string s;
-    while (vm.memory[vm.pcode] != 0) {
-        s += vm.memory[vm.pcode++];
+    while ((*vm.active_p_code)[vm.pcode] != 0) {
+        s += (*vm.active_p_code)[vm.pcode++];
     }
     vm.pcode++; // Skip the null terminator
     return s;
 }
-//}
+
 
 // Finds a variable, checking local scope first, then global.
 // Returns a reference so it can be read from or assigned to.
@@ -108,20 +111,20 @@ void print_value(const BasicValue& val) {
 }
 
 void Commands::do_dim(NeReLaBasic& vm) {
-    Tokens::ID array_token = static_cast<Tokens::ID>(vm.memory[vm.pcode++]);
+    Tokens::ID array_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
     std::string array_name = to_upper(read_string(vm));
 
     //// Expect an opening bracket '['
-    //if (static_cast<Tokens::ID>(vm.memory[vm.pcode++]) != Tokens::ID::C_LEFTBRACKET) {
-    //    Error::set(1, vm.runtime_current_line); return;
-    //}
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTBRACKET) {
+        Error::set(1, vm.runtime_current_line); return;
+    }
 
     BasicValue size_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
     int size = static_cast<int>(to_double(size_val));
 
     // Expect a closing bracket ']'
-    if (static_cast<Tokens::ID>(vm.memory[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
         Error::set(1, vm.runtime_current_line); return;
     }
 
@@ -132,7 +135,7 @@ void Commands::do_dim(NeReLaBasic& vm) {
 
 void Commands::do_input(NeReLaBasic& vm) {
     // Peek at the next token to see if there is an optional prompt string.
-    Tokens::ID next_token = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
     if (next_token == Tokens::ID::STRING) {
         // --- Case 1: Handle a prompt string ---
@@ -141,7 +144,7 @@ void Commands::do_input(NeReLaBasic& vm) {
         TextIO::print(to_string(prompt));
 
         // After the prompt, there MUST be a separator (',' or ';').
-        Tokens::ID separator = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+        Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
         if (separator == Tokens::ID::C_SEMICOLON) {
             vm.pcode++; // Consume the semicolon
             TextIO::print(" "); // Suppress the '?' and print a space
@@ -162,7 +165,7 @@ void Commands::do_input(NeReLaBasic& vm) {
     }
 
     // Now, we are past the prompt and separator, so we can get the variable name.
-    next_token = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+    next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     if (next_token != Tokens::ID::VARIANT && next_token != Tokens::ID::INT && next_token != Tokens::ID::STRVAR) {
         Error::set(1, vm.runtime_current_line); // Syntax error, expected a variable
         return;
@@ -194,7 +197,7 @@ void Commands::do_print(NeReLaBasic& vm) {
     // Loop through all items in the PRINT list until the statement ends.
     while (true) {
         // Peek at the next token to decide what to do.
-        Tokens::ID next_token = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+        Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
         if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR) {
             TextIO::nl(); return;
         }
@@ -206,12 +209,12 @@ void Commands::do_print(NeReLaBasic& vm) {
         print_value(result); // Use our helper to print the result, whatever its type
 
         // --- Step 2: Look ahead for a separator ---
-        Tokens::ID separator = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+        Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
         if (separator == Tokens::ID::C_COMMA) {
             vm.pcode++; // Consume the comma
             // Check if the line ends right after the comma
-            Tokens::ID after_separator = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+            Tokens::ID after_separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
             if (after_separator == Tokens::ID::NOCMD || after_separator == Tokens::ID::C_CR) {
                 return; // Ends with a comma, so no newline.
             }
@@ -220,7 +223,7 @@ void Commands::do_print(NeReLaBasic& vm) {
         else if (separator == Tokens::ID::C_SEMICOLON) {
             vm.pcode++; // Consume the semicolon
             // Check if the line ends right after the semicolon
-            Tokens::ID after_separator = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+            Tokens::ID after_separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
             if (after_separator == Tokens::ID::NOCMD || after_separator == Tokens::ID::C_CR) {
                 return; // Ends with a semicolon, so no newline.
             }
@@ -233,34 +236,22 @@ void Commands::do_print(NeReLaBasic& vm) {
         }
     }
 }
-//void Commands::do_let(NeReLaBasic& vm) {
-//    std::string var_name;
-//    while (vm.memory[vm.pcode] != 0) { var_name += vm.memory[vm.pcode++]; }
-//    vm.pcode++;
-//    if (static_cast<Tokens::ID>(vm.memory[vm.pcode]) != Tokens::ID::C_EQ) {
-//        Error::set(1, vm.runtime_current_line); return;
-//    }
-//    vm.pcode++;
-//    BasicValue value = vm.evaluate_expression(); // This now returns a BasicValue
-//    if (Error::get() != 0) return;
-//    set_variable(vm, var_name, value); // Store the BasicValue in the new map
-//}
 
 void Commands::do_let(NeReLaBasic& vm) {
-    Tokens::ID var_type_token = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+    Tokens::ID var_type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     vm.pcode++;
     std::string name = to_upper(read_string(vm));
 
     // Check if this is an array assignment, e.g., A[i] = ...
     if (var_type_token == Tokens::ID::ARRAY_ACCESS) {
-        //if (static_cast<Tokens::ID>(vm.memory[vm.pcode++]) != Tokens::ID::C_LEFTBRACKET) {
-        //    Error::set(1, vm.runtime_current_line); return;
-        //}
-        int index = static_cast<int>(to_double(vm.evaluate_expression()));
-        if (static_cast<Tokens::ID>(vm.memory[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTBRACKET) {
             Error::set(1, vm.runtime_current_line); return;
         }
-        if (static_cast<Tokens::ID>(vm.memory[vm.pcode++]) != Tokens::ID::C_EQ) {
+        int index = static_cast<int>(to_double(vm.evaluate_expression()));
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+            Error::set(1, vm.runtime_current_line); return;
+        }
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
         }
         BasicValue value_to_assign = vm.evaluate_expression();
@@ -270,16 +261,62 @@ void Commands::do_let(NeReLaBasic& vm) {
             vm.arrays.at(name)[index] = value_to_assign;
         }
         else {
-            Error::set(24, vm.runtime_current_line); // Bad subscript
+            Error::set(10, vm.runtime_current_line); // Bad subscript
         }
     }
     else { // It's a simple variable assignment, e.g., A = ...
-        if (static_cast<Tokens::ID>(vm.memory[vm.pcode++]) != Tokens::ID::C_EQ) {
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
         }
-        BasicValue value_to_assign = vm.evaluate_expression();
-        if (Error::get() != 0) return;
-        set_variable(vm, name, value_to_assign);
+        Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+        if (next_token == Tokens::ID::C_LEFTBRACKET) {
+            // It IS an array literal assignment!
+            vm.pcode++; // Consume the '['
+
+            // Check if the target variable is actually an array
+            if (vm.arrays.find(name) == vm.arrays.end()) {
+                Error::set(15, vm.runtime_current_line); // Type Mismatch error
+                return;
+            }
+
+            std::vector<BasicValue> values;
+            // Loop until we find the closing bracket ']'
+            while (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+                values.push_back(vm.evaluate_expression());
+                if (Error::get() != 0) return;
+
+                // After an element, we expect either a comma or the closing bracket
+                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                if (separator == Tokens::ID::C_COMMA) {
+                    vm.pcode++; // Consume comma and loop to the next element
+                }
+                else if (separator != Tokens::ID::C_RIGHTBRACKET) {
+                    Error::set(1, vm.runtime_current_line); // Syntax Error
+                    return;
+                }
+            }
+            vm.pcode++; // Consume the ']'
+
+            // Copy the parsed values into the target array, up to its capacity
+            for (size_t i = 0; i < vm.arrays.at(name).size(); ++i) {
+                if (i < values.size()) {
+                    vm.arrays.at(name)[i] = values[i];
+                }
+                else {
+                    // If the literal has fewer items than the array size, fill the rest with defaults
+                    bool is_string_array = (name.back() == '$');
+                    vm.arrays.at(name)[i] = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
+                }
+            }
+
+        }
+        else {
+            // It's a normal variable assignment, e.g., a = 5
+            BasicValue value_to_assign = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            set_variable(vm, name, value_to_assign);
+        }
     }
 }
 
@@ -310,8 +347,8 @@ void Commands::do_if(NeReLaBasic& vm) {
 
     if (!to_bool(result)) {
         // Condition is false, so jump. Read the address from the placeholder.
-        uint8_t lsb = vm.memory[jump_placeholder_addr];
-        uint8_t msb = vm.memory[jump_placeholder_addr + 1];
+        uint8_t lsb = (*vm.active_p_code)[jump_placeholder_addr];
+        uint8_t msb = (*vm.active_p_code)[jump_placeholder_addr + 1];
         vm.pcode = (msb << 8) | lsb;
     }
     // If true, we do nothing and just continue execution from the current pcode.
@@ -321,8 +358,8 @@ void Commands::do_if(NeReLaBasic& vm) {
 void Commands::do_else(NeReLaBasic& vm) {
     // ELSE is an unconditional jump. The placeholder is right after the token.
     uint16_t jump_placeholder_addr = vm.pcode;
-    uint8_t lsb = vm.memory[jump_placeholder_addr];
-    uint8_t msb = vm.memory[jump_placeholder_addr + 1];
+    uint8_t lsb = (*vm.active_p_code)[jump_placeholder_addr];
+    uint8_t msb = (*vm.active_p_code)[jump_placeholder_addr + 1];
     vm.pcode = (msb << 8) | lsb;
 }
 
@@ -330,7 +367,7 @@ void Commands::do_for(NeReLaBasic& vm) {
     // FOR [variable] = [start_expr] TO [end_expr] STEP [step_expr]
 
     // 1. Get the loop variable name.
-    Tokens::ID var_token = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+    Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     if (var_token != Tokens::ID::VARIANT && var_token != Tokens::ID::INT) {
         Error::set(1, vm.runtime_current_line); // Syntax Error
         return;
@@ -339,7 +376,7 @@ void Commands::do_for(NeReLaBasic& vm) {
     std::string var_name = read_string(vm);
 
     // 2. Expect an equals sign.
-    if (static_cast<Tokens::ID>(vm.memory[vm.pcode++]) != Tokens::ID::C_EQ) {
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
         Error::set(1, vm.runtime_current_line);
         return;
     }
@@ -358,7 +395,7 @@ void Commands::do_for(NeReLaBasic& vm) {
 
     // The TO and STEP keywords were skipped by the tokenizer.
     // If we are NOT at the end of the line, what's left must be the step expression.
-    Tokens::ID next_token = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::NOCMD)
     {
         BasicValue step_expr_val = vm.evaluate_expression();
@@ -417,8 +454,8 @@ void Commands::do_next(NeReLaBasic& vm) {
 void Commands::do_func(NeReLaBasic& vm) {
     // The FUNC token was consumed by statement(). pcode points to its arguments.
     // In our bytecode, the argument is the 2-byte address to jump to.
-    uint8_t lsb = vm.memory[vm.pcode++];
-    uint8_t msb = vm.memory[vm.pcode++];
+    uint8_t lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t msb = (*vm.active_p_code)[vm.pcode++];
     uint16_t jump_over_address = (msb << 8) | lsb;
 
     // Set pcode to the target, skipping the entire function body.
@@ -451,9 +488,9 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         std::vector<BasicValue> args;
         vm.pcode++; // Skip '('
         bool first_arg = true;
-        while (vm.pcode < vm.memory.size() && static_cast<Tokens::ID>(vm.memory[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+        while (vm.pcode < (*vm.active_p_code).size() && static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
             if (!first_arg) {
-                if (static_cast<Tokens::ID>(vm.memory[vm.pcode]) == Tokens::ID::C_COMMA) vm.pcode++;
+                if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) vm.pcode++;
                 else { Error::set(1, vm.runtime_current_line); return; }
             }
             args.push_back(vm.evaluate_expression());
@@ -472,7 +509,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         vm.pcode++; // Skip '('
         for (const auto& param_name : func_info.parameter_names) {
             frame.local_variables[param_name] = vm.evaluate_expression();
-            if (static_cast<Tokens::ID>(vm.memory[vm.pcode]) == Tokens::ID::C_COMMA) vm.pcode++;
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) vm.pcode++;
         }
         vm.pcode++; // Skip ')'
 
@@ -482,7 +519,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
 
         // Nested Execution Loop
         while (true) {
-            Tokens::ID func_token = static_cast<Tokens::ID>(vm.memory[vm.pcode]);
+            Tokens::ID func_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
             if (Error::get() != 0) break;
             if (func_token == Tokens::ID::ENDFUNC || func_token == Tokens::ID::RETURN) {
                 vm.statement(); break;
@@ -526,63 +563,146 @@ void Commands::do_endfunc(NeReLaBasic& vm) {
     vm.call_stack.pop_back();
 }
 
-void Commands::do_list(NeReLaBasic& vm) {
-    uint16_t ptr = vm.PROGRAM_START_ADDR;
-    while (true) {
-        uint8_t token = vm.memory[ptr];
-        // The end-of-program marker is a NOCMD token followed by a null byte.
-        if (token == static_cast<uint8_t>(Tokens::ID::NOCMD) && vm.memory[ptr + 1] == 0) {
-            break;
-        }
-        // Just print the character as-is.
-        std::cout << static_cast<char>(token);
-        ptr++;
-        // Safety break to prevent infinite loops on bad programs
-        if (ptr >= vm.memory.size() - 1) break;
+
+// At runtime, SUB just jumps over the procedure body.
+// This is identical to how FUNC works.
+void Commands::do_sub(NeReLaBasic& vm) {
+    Commands::do_func(vm);
+}
+
+// At runtime, ENDSUB handles returning from a procedure call.
+// It pops the call stack and restores the program counter.
+void Commands::do_endsub(NeReLaBasic& vm) {
+    if (vm.call_stack.empty()) {
+        Error::set(9, vm.runtime_current_line); // RETURN without GOSUB/CALL
+        return;
     }
+    // For a procedure, there is no return value to set.
+    // We just pop the stack and set pcode to the return address.
+    auto& frame = vm.call_stack.back();
+    vm.pcode = frame.return_pcode;
+    vm.call_stack.pop_back();
+}
+
+
+void Commands::do_callsub(NeReLaBasic& vm) {
+    std::string proc_name = to_upper(read_string(vm));
+
+    if (!vm.function_table.count(proc_name)) {
+        Error::set(22, vm.runtime_current_line); // Function/Sub not found
+        return;
+    }
+
+    const auto& proc_info = vm.function_table.at(proc_name);
+    std::vector<BasicValue> args;
+
+    if (proc_info.arity == -1) {
+        // --- CASE 1: Variable / Optional Arguments (e.g., DIR) ---
+        // Loop as long as we haven't hit the end of the statement.
+        while (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_CR) {
+            // Peek at the next token to decide how to parse the argument
+            Tokens::ID arg_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (arg_token == Tokens::ID::VARIANT || arg_token == Tokens::ID::STRVAR) {
+                vm.pcode++;
+                std::string var_name = read_string(vm);
+                args.push_back(var_name);
+            }
+            else {
+                args.push_back(vm.evaluate_expression());
+                if (Error::get() != 0) return;
+            }
+
+            // If there's a comma, consume it. Otherwise, we're done with arguments.
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) {
+                vm.pcode++;
+            }
+            else {
+                break;
+            }
+        }
+    }
+    else {
+        // --- CASE 2: Fixed Number of Arguments ---
+        if (proc_info.arity > 0) {
+            for (int i = 0; i < proc_info.arity; ++i) {
+                if (i > 0) {
+                    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) {
+                        vm.pcode++;
+                    }
+                    else {
+                        Error::set(1, vm.runtime_current_line); // Syntax Error, missing comma
+                        return;
+                    }
+                }
+
+                Tokens::ID arg_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                if (arg_token == Tokens::ID::VARIANT || arg_token == Tokens::ID::STRVAR) {
+                    vm.pcode++;
+                    std::string var_name = read_string(vm);
+                    args.push_back(var_name);
+                }
+                else {
+                    args.push_back(vm.evaluate_expression());
+                    if (Error::get() != 0) return;
+                }
+            }
+        }
+        // If arity is 0, this block is correctly skipped.
+    }
+
+    // --- Execution logic remains the same ---
+    if (proc_info.native_impl != nullptr) {
+        proc_info.native_impl(args);
+    }
+    else {
+        NeReLaBasic::StackFrame frame;
+        for (size_t i = 0; i < proc_info.parameter_names.size(); ++i) {
+            if (i < args.size()) {
+                frame.local_variables[proc_info.parameter_names[i]] = args[i];
+            }
+        }
+        frame.return_pcode = vm.pcode;
+        vm.call_stack.push_back(frame);
+        vm.pcode = proc_info.start_pcode;
+    }
+}
+void Commands::do_list(NeReLaBasic& vm) {
+    // Simply print the stored source code.
+    TextIO::print(vm.source_code);
 }
 
 void Commands::do_load(NeReLaBasic& vm) {
-    // LOAD expects a filename in a string literal
-    if (static_cast<Tokens::ID>(vm.memory[vm.pcode]) != Tokens::ID::STRING) {
-        Error::set(1, vm.runtime_current_line); // Syntax Error
-        TextIO::print("?SYNTAX ERROR\n");
+    // LOAD expects a filename
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::STRING) {
+        Error::set(1, vm.runtime_current_line);
         return;
     }
     vm.pcode++; // Consume STRING token
-    std::string filename = read_string(vm);
+    std::string filename = read_string(vm); // read_string now reads from (*vm.active_p_code)
 
-    std::ifstream infile(filename, std::ios::binary);
+    std::ifstream infile(filename); // Open in text mode
     if (!infile) {
-        // Your old code used error 3 for file errors
-        Error::set(3, vm.runtime_current_line);
-        TextIO::print("?FILE NOT FOUND ERROR\n");
+        Error::set(6, vm.runtime_current_line);
         return;
     }
 
     TextIO::print("LOADING " + filename + "\n");
-    // Read the file byte-by-byte into program memory
-    char c;
-    uint16_t ptr = vm.PROGRAM_START_ADDR;
-    while (infile.get(c) && ptr < vm.memory.size() - 2) {
-        vm.memory[ptr++] = static_cast<uint8_t>(c);
-    }
-
-    // Write the end-of-program marker
-    vm.memory[ptr++] = static_cast<uint8_t>(Tokens::ID::NOCMD);
-    vm.memory[ptr] = 0;
+    // Read the entire file into the source_code string
+    std::stringstream buffer;
+    buffer << infile.rdbuf();
+    vm.source_code = buffer.str();
 }
 
 void Commands::do_save(NeReLaBasic& vm) {
-    if (static_cast<Tokens::ID>(vm.memory[vm.pcode]) != Tokens::ID::STRING) {
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::STRING) {
         Error::set(1, vm.runtime_current_line);
         TextIO::print("?SYNTAX ERROR\n");
         return;
     }
     vm.pcode++; // Consume STRING token
-    std::string filename = read_string(vm);
+    std::string filename = read_string(vm); // read_string now reads from (*vm.active_p_code)
 
-    std::ofstream outfile(filename, std::ios::binary);
+    std::ofstream outfile(filename); // Open in text mode
     if (!outfile) {
         Error::set(3, vm.runtime_current_line);
         TextIO::print("?FILE I/O ERROR\n");
@@ -590,19 +710,91 @@ void Commands::do_save(NeReLaBasic& vm) {
     }
 
     TextIO::print("SAVING " + filename + "\n");
-    // Write program memory to the file until we hit the end marker
-    uint16_t ptr = vm.PROGRAM_START_ADDR;
-    while (true) {
-        uint8_t token = vm.memory[ptr];
-        if (token == static_cast<uint8_t>(Tokens::ID::NOCMD) && vm.memory[ptr + 1] == 0) {
-            break;
-        }
-        outfile.put(static_cast<char>(token));
-        ptr++;
-        if (ptr >= vm.memory.size() - 1) break;
+    // Write the source_code string directly to the file
+    outfile << vm.source_code;
+}
+
+void Commands::do_compile(NeReLaBasic& vm) {
+    TextIO::print("Compiling...\n");
+    if (vm.tokenize_program(vm.program_p_code) == 0) {
+        TextIO::print("OK. Program compiled to " + std::to_string(vm.program_p_code.size()) + " bytes.\n");
+    }
+    else {
+        // Error message is printed by tokenize_program
+        TextIO::print("Compilation failed.\n");
     }
 }
 
 void Commands::do_run(NeReLaBasic& vm) {
-    vm.run_program();
+    // Compile into the main program buffer
+    if (vm.tokenize_program(vm.program_p_code) != 0) {
+        TextIO::print("Compilation failed. Cannot run.\n");
+        return;
+    }
+
+    // Clear variables and prepare for a clean run
+    vm.variables.clear();
+    vm.arrays.clear();
+    vm.call_stack.clear();
+    vm.for_stack.clear();
+
+    TextIO::print("Running...\n");
+    // Execute from the main program buffer
+    vm.execute(vm.program_p_code);
+
+    // If the execution resulted in an error, print it
+    if (Error::get() != 0) {
+        Error::print();
+    }
+}
+
+void Commands::do_tron(NeReLaBasic& vm) {
+    vm.trace = 1;
+    TextIO::print("TRACE ON\n");
+}
+
+void Commands::do_troff(NeReLaBasic& vm) {
+    vm.trace = 0;
+    TextIO::print("TRACE OFF\n");
+}
+
+void Commands::do_dump(NeReLaBasic& vm) {
+    const int bytes_per_line = 16;
+    TextIO::print("Dumping p_code vector (" + std::to_string(vm.program_p_code.size()) + " bytes):\n");
+
+    for (size_t i = 0; i < vm.program_p_code.size(); i += bytes_per_line) {
+        // Print Address
+        std::stringstream ss_addr;
+        ss_addr << "0x" << std::setw(4) << std::setfill('0') << std::hex << i;
+        TextIO::print(ss_addr.str() + " : ");
+
+        // Print Hex Bytes
+        std::stringstream ss_hex;
+        for (int j = 0; j < bytes_per_line; ++j) {
+            if (i + j < vm.program_p_code.size()) {
+                ss_hex << std::setw(2) << std::setfill('0') << std::hex
+                    << static_cast<int>(vm.program_p_code[i + j]) << " ";
+            }
+            else {
+                ss_hex << "   ";
+            }
+        }
+        TextIO::print(ss_hex.str() + " : ");
+
+        // Print ASCII characters
+        std::stringstream ss_ascii;
+        for (int j = 0; j < bytes_per_line; ++j) {
+            if (i + j < vm.program_p_code.size()) {
+                char c = vm.program_p_code[i + j];
+                if (isprint(static_cast<unsigned char>(c))) {
+                    ss_ascii << c;
+                }
+                else {
+                    ss_ascii << '.';
+                }
+            }
+        }
+        TextIO::print(ss_ascii.str());
+        TextIO::nl();
+    }
 }

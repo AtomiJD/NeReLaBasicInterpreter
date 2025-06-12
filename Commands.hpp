@@ -20,11 +20,19 @@ namespace Commands {
     void do_callfunc(NeReLaBasic& vm);
     void do_return(NeReLaBasic& vm);
     void do_endfunc(NeReLaBasic& vm);
+    void do_sub(NeReLaBasic& vm);
+    void do_endsub(NeReLaBasic& vm);
+    void do_callsub(NeReLaBasic& vm);
 
     void do_list(NeReLaBasic& vm);
     void do_load(NeReLaBasic& vm);
     void do_save(NeReLaBasic& vm);
+    void do_compile(NeReLaBasic& vm);
     void do_run(NeReLaBasic& vm);
+
+    void do_tron(NeReLaBasic& vm);
+    void do_troff(NeReLaBasic& vm);
+    void do_dump(NeReLaBasic& vm);
 }
 
 BasicValue& get_variable(NeReLaBasic& vm, const std::string& name);

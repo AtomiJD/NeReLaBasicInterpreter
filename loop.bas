@@ -1,4 +1,4 @@
-func apply(fa(),cc)
+func apply(fa,cc)
     return fa(cc,2)
 endfunc
 

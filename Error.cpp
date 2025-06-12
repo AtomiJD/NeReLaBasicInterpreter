@@ -15,9 +15,14 @@ namespace {
         "OK",                  // 0
         "Syntax Error",        // 1
         "Calculation Error",   // 2
-        "Variable Not Found",  // 3
+        "Variable not found",  // 3
         "Unclosed IF/ENDIF",   // 4
-        "Unclosed FUNC/ENDFUNC"// 5
+        "Unclosed FUNC/ENDFUNC",// 5
+        "File not found",       // 6
+        "Function/Sub name not found", //7
+        "Wrong number of arguments", //8
+        "RETURN without GOSUB/CALL", //9
+        "Array out of bounds" //10
         // Add more messages as needed
     };
 }

@@ -11,6 +11,7 @@
 #include <string>
 #include <stdexcept>
 #include <cstring>
+#include <conio.h>
 
 // Helper function to convert a string from the BASIC source to a number.
 // Supports decimal, hexadecimal ('$'), and binary ('%').
@@ -32,7 +33,7 @@ uint16_t stringToWord(const std::string& s) {
 }
 
 // Constructor: Initializes the interpreter state
-NeReLaBasic::NeReLaBasic() : memory(65536, 0) { // Allocate 64KB of memory
+NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memory
     buffer.reserve(64);
     lineinput.reserve(160);
     filename.reserve(40);
@@ -48,19 +49,17 @@ void NeReLaBasic::init_screen() {
 
 void NeReLaBasic::init_system() {
     // Let's set the program start memory location, as in the original.
-    pend = 0x0000; // A common start address for BASIC programs
-    pcode = pend;
+    pcode = 0;
 
     TextIO::print("Prog start:   ");
     TextIO::print_uwhex(pcode);
     TextIO::nl();
 
-    uint16_t free_mem = MEM_END - pcode;
-    TextIO::print("Free memory:  ");
-    TextIO::print_uw(free_mem);
-    TextIO::nl();
-
     trace = 0;
+
+    TextIO::print("Trace is:  ");
+    TextIO::print_uw(trace);
+    TextIO::nl();
 }
 
 void NeReLaBasic::init_basic() {
@@ -77,24 +76,27 @@ void NeReLaBasic::start() {
     std::string inputLine;
     while (true) {
         Error::clear();
+        direct_p_code.clear();
         linenr = 0;
         TextIO::print("Ready\n? ");
 
         if (!std::getline(std::cin, inputLine) || inputLine.empty()) continue;
 
         // Tokenize the direct-mode line, passing '0' as the line number
-        if (tokenize(inputLine, pend, 0) != 0) {
+        if (tokenize(inputLine, 0, direct_p_code) != 0) {
             Error::print();
             continue;
         }
-        runl(); // Execute the line
+        // Execute the direct-mode p_code
+        execute(direct_p_code);
+
         if (Error::get() != 0) {
             Error::print();
         }
     }
 }
 
-Tokens::ID NeReLaBasic::parse() {
+Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm) {
     buffer.clear();
 
     // --- Step 1: Skip any leading whitespace ---
@@ -113,7 +115,7 @@ Tokens::ID NeReLaBasic::parse() {
     // Handle Comments
     if (currentChar == '\'') {
         prgptr = lineinput.length(); // Skip to end of line
-        return parse(); // Call parse again to get the NOCMD token
+        return parse(*this); // Call parse again to get the NOCMD token
     }
 
     // Handle String Literals (including "")
@@ -161,6 +163,10 @@ Tokens::ID NeReLaBasic::parse() {
         Tokens::ID keywordToken = Statements::get(buffer);
         if (keywordToken != Tokens::ID::NOCMD) {
             return keywordToken;
+        }
+
+        if (vm.function_table.count(buffer) && vm.function_table.at(buffer).is_procedure) {
+            return Tokens::ID::CALLSUB; // It's a command-style procedure call!
         }
 
         size_t suffix_ptr = prgptr;
@@ -240,267 +246,272 @@ Tokens::ID NeReLaBasic::parse() {
     Error::set(1, current_source_line);
     return Tokens::ID::NOCMD;
 }
-// In NeReLaBasic.cpp
 
-uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t baseAddress, uint16_t lineNumber) {
-    // Set the global pointers to the start of this tokenization task
+uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code) {
     lineinput = line;
-    prgptr = 0;      // Start parsing from the beginning of the line
-    pcode = baseAddress; // Start writing bytecode to this address
-    
-    auto trim = [](std::string& s) {
-        s.erase(0, s.find_first_not_of(" \t\n\r"));
-        s.erase(s.find_last_not_of(" \t\n\r") + 1);
-        return s;
-    };
-    
-    // --- Write the 2-byte line number as a prefix to the bytecode ---
-    memory[pcode++] = lineNumber & 0xFF;
-    memory[pcode++] = (lineNumber >> 8) & 0xFF;
+    prgptr = 0;
 
-    // --- Check if this is a function definition line ---
-    std::string quick_check_line = line;
-    trim(quick_check_line);
-    if (quick_check_line.rfind("func", 0) == 0) {
-        // This line IS a function definition. We will parse it fully here
-        // and generate only the necessary runtime bytecode.
+    // Write the line number prefix for this line's bytecode.
+    out_p_code.push_back(lineNumber & 0xFF);
+    out_p_code.push_back((lineNumber >> 8) & 0xFF);
 
-        FunctionInfo info;
+    // Single loop to process all tokens on the line.
+    while (prgptr < lineinput.length()) {
+        Tokens::ID token = parse(*this);
 
-        size_t open_paren = line.find('(');
-        size_t close_paren = line.rfind(')');
+        if (Error::get() != 0) return Error::get();
+        if (token == Tokens::ID::NOCMD) break; // End of line reached.
 
-        if (open_paren != std::string::npos && close_paren != std::string::npos) {
-            // Extract name
-            std::string name_part = line.substr(0, open_paren);
-            size_t name_start = name_part.find("func") + 4;
-            info.name = name_part.substr(name_start);
-            trim(info.name);
+        // Use a switch for special compile-time tokens.
+        switch (token) {
+            // Keywords that are ignored at compile-time (they are just markers).
+        case Tokens::ID::THEN:
+        case Tokens::ID::TO:
+        case Tokens::ID::STEP:
+            continue; // Do nothing, just consume the token.
 
-            // Extract params
-            std::string params_str = line.substr(open_paren + 1, close_paren - (open_paren + 1));
-            std::stringstream pss(params_str);
-            std::string param;
-            while (std::getline(pss, param, ',')) {
-                trim(param);
-                // --- THIS IS THE FIX FOR "fa()" ---
-                size_t func_paren = param.find('(');
-                if (func_paren != std::string::npos) {
-                    param = param.substr(0, func_paren);
+            // A comment token means we ignore the rest of the line.
+        case Tokens::ID::REM:
+            prgptr = lineinput.length();
+            continue;
+
+            // A label stores the current bytecode address but isn't a token itself.
+        case Tokens::ID::LABEL:
+            label_addresses[buffer] = out_p_code.size();
+            continue;
+
+            // Handle FUNC: parse the name, write a placeholder, and store the patch address.
+        case Tokens::ID::FUNC: {
+            parse(*this); // Parse the next token, which is the function name.
+            FunctionInfo info;
+            info.name = to_upper(buffer);
+
+            // Find parentheses to get parameter string
+            size_t open_paren = line.find('(', prgptr);
+            size_t close_paren = line.rfind(')');
+            if (open_paren != std::string::npos && close_paren != std::string::npos) {
+                auto trim = [](std::string& s) {
+                    s.erase(0, s.find_first_not_of(" \t\n\r"));
+                    s.erase(s.find_last_not_of(" \t\n\r") + 1);
+                    };
+                std::string params_str = line.substr(open_paren + 1, close_paren - (open_paren + 1));
+                std::stringstream pss(params_str);
+                std::string param;
+                while (std::getline(pss, param, ',')) {
+                    trim(param);
+                    if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                 }
-                if (!param.empty()) info.parameter_names.push_back(to_upper(param));
             }
 
-            // Populate the table entry completely
-            info.start_pcode = pcode + 3; // The code starts after the FUNC token and its jump address
-            function_table[to_upper(info.name)] = info;
+            info.start_pcode = out_p_code.size() + 3; // +3 for FUNC token and 2-byte address
+            function_table[info.name] = info;
 
-            // Write the FUNC token and the placeholder for the jump-over address
-            memory[pcode++] = static_cast<uint8_t>(Tokens::ID::FUNC);
-            func_stack.push_back(pcode);
-            pcode += 2;
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            func_stack.push_back(out_p_code.size()); // Store address of the placeholder
+            out_p_code.push_back(0); // Placeholder byte 1
+            out_p_code.push_back(0); // Placeholder byte 2
+            prgptr = lineinput.length(); // The rest of the line is params, so we consume it.
+            continue;
+        }
+
+        // Handle ENDFUNC: pop the stored address and patch the jump offset.
+        case Tokens::ID::ENDFUNC: {
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            if (!func_stack.empty()) {
+                uint16_t func_jump_addr = func_stack.back();
+                func_stack.pop_back();
+                uint16_t jump_target = out_p_code.size();
+                out_p_code[func_jump_addr] = jump_target & 0xFF;
+                out_p_code[func_jump_addr + 1] = (jump_target >> 8) & 0xFF;
+            }
+            continue;
+        }
+        case Tokens::ID::SUB: {
+            // The 'SUB' token has been consumed. The next token must be the name.
+            parse(*this);
+            FunctionInfo info;
+            info.name = to_upper(buffer);
+            info.is_procedure = true;
+
+            // --- Use stringstream for robust parameter parsing ---
+            // Find the rest of the line after the procedure name.
+            std::string all_params_str = lineinput.substr(prgptr);
+            std::stringstream pss(all_params_str);
+            std::string param_buffer;
+
+            auto trim = [](std::string& s) {
+                s.erase(0, s.find_first_not_of(" \t\n\r"));
+                s.erase(s.find_last_not_of(" \t\n\r") + 1);
+                };
+
+            // Read from the string stream, using ',' as a delimiter.
+            while (std::getline(pss, param_buffer, ',')) {
+                trim(param_buffer);
+                if (!param_buffer.empty()) {
+                    info.parameter_names.push_back(to_upper(param_buffer));
+                }
+            }
+
+            info.arity = info.parameter_names.size();
+            info.start_pcode = out_p_code.size() + 3; // +3 for SUB token and 2-byte address
+            function_table[info.name] = info;
+
+            // Write the SUB token and its placeholder jump address
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            func_stack.push_back(out_p_code.size());
+            out_p_code.push_back(0); // Placeholder byte 1
+            out_p_code.push_back(0); // Placeholder byte 2
+
+            // We have processed the entire line.
+            prgptr = lineinput.length();
+            continue;
+        }
+        case Tokens::ID::ENDSUB: {
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            if (!func_stack.empty()) {
+                uint16_t func_jump_addr = func_stack.back();
+                func_stack.pop_back();
+                uint16_t jump_target = out_p_code.size();
+                out_p_code[func_jump_addr] = jump_target & 0xFF;
+                out_p_code[func_jump_addr + 1] = (jump_target >> 8) & 0xFF;
+            }
+            continue;
+        }
+        case Tokens::ID::CALLSUB: {
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            for (char c : buffer) out_p_code.push_back(c);
+            out_p_code.push_back(0); // Write the procedure name string
+            // Arguments that follow will be tokenized normally.
+            continue;
+        }
+        case Tokens::ID::GOTO: {
+                // Write the GOTO command token itself
+            out_p_code.push_back(static_cast<uint8_t>(token));
+
+            // Immediately parse the next token on the line, which should be the label name
+            Tokens::ID label_name_token = parse(*this);
+
+            // Check if we got a valid identifier for the label
+            if (label_name_token == Tokens::ID::VARIANT || label_name_token == Tokens::ID::INT) {
+                // The buffer now holds the label name, so write IT to the bytecode
+                for (char c : buffer) {
+                    out_p_code.push_back(c);
+                }
+                out_p_code.push_back(0); // Null terminator
+            }
+            else {
+                // This is an error, e.g., "GOTO 123" or "GOTO +"
+                Error::set(1, runtime_current_line); // Syntax Error
+            }
+            // We have now processed GOTO and its argument, so restart the main loop
+            continue;
+        }
+        case Tokens::ID::IF: {
+            // Write the IF token, then leave a 2-byte placeholder for the jump address.
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            if_stack.push_back({ (uint16_t)out_p_code.size(), current_source_line }); // Save address of the placeholder
+            out_p_code.push_back(0); // Placeholder byte 1
+            out_p_code.push_back(0); // Placeholder byte 2
+            //prgptr = lineinput.length(); // The rest of the line is params, so we consume it.
+            //prgptr = out_p_code.size(); // The rest of the line is params, so we consume it.
+            break; // The expression after IF will be tokenized next
+        }
+        case Tokens::ID::ELSE: {
+            // Pop the IF's placeholder address from the stack.
+            IfStackInfo if_info = if_stack.back();
+            if_stack.pop_back();
+
+            // Now, write the ELSE token and its own placeholder for jumping past the ELSE block.
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            if_stack.push_back({ (uint16_t)out_p_code.size(), current_source_line }); // Push address of ELSE's placeholder
+            out_p_code.push_back(0); // Placeholder byte 1
+            out_p_code.push_back(0); // Placeholder byte 2
+            //prgptr = lineinput.length(); 
+
+            // Go back and patch the original IF's jump to point to the instruction AFTER the ELSE's placeholder.
+            uint16_t jump_target = out_p_code.size();
+            out_p_code[if_info.patch_address] = jump_target & 0xFF;
+            out_p_code[if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+            continue;
+        }
+        case Tokens::ID::ENDIF: {
+            // Pop the corresponding IF or ELSE placeholder address from the stack.
+            IfStackInfo last_if_info = if_stack.back();
+            if_stack.pop_back();
+
+            // Patch it to point to the current location.
+            uint16_t jump_target = out_p_code.size();
+            out_p_code[last_if_info.patch_address] = jump_target & 0xFF;
+            out_p_code[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+
+            // Don't write the ENDIF token, it's a compile-time marker.
+            continue;
+        }
+        if (token == Tokens::ID::CALLFUNC) {
+            // The buffer holds the function name (e.g., "lall").
+            // Write the CALLFUNC token, then write the function name string.
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            for (char c : buffer) {
+                out_p_code.push_back(c);
+            }
+            out_p_code.push_back(0); // Null terminator
+
+            // The arguments inside (...) will be tokenized as a normal expression
+            // by subsequent loops, which is what the evaluator expects.
+            continue;
+        }
+        case Tokens::ID::NEXT: {
+            // Write the NEXT token to the P-Code. This is all the runtime needs.
+            out_p_code.push_back(static_cast<uint8_t>(token));
+
+            // Now, parse the variable name that follows ("i") to advance the
+            // parsing pointer, but we will discard the result.
+            parse(*this);
+
+            // We have now processed the entire "next i" statement.
+            // Continue to the next token on the line (if any).
+            continue;
+        }
+        default: {
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT || token == Tokens::ID::INT ||
+                token == Tokens::ID::STRVAR || token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS ||
+                token == Tokens::ID::CALLFUNC)
+            {
+                for (char c : buffer) out_p_code.push_back(c);
+                out_p_code.push_back(0);
+            }
+            else if (token == Tokens::ID::NUMBER) {
+                double value = std::stod(buffer);
+                uint8_t double_bytes[sizeof(double)];
+                memcpy(double_bytes, &value, sizeof(double));
+                out_p_code.insert(out_p_code.end(), double_bytes, double_bytes + sizeof(double));
+            }
+        }
         }
     }
-    else {
-        // This is a normal line, process it token by token.
-        Tokens::ID token;
-        do {
-            token = parse(); // Get the next token from the line
 
-            if (Error::get() != 0) {
-                return Error::get(); // Abort on parsing error
-            }
-
-            if (token != Tokens::ID::NOCMD) {
-                if (token == Tokens::ID::REM) {
-                    // REM comment, ignore the rest of the line.
-                    break;
-                }
-                if (token == Tokens::ID::ENDFUNC) {
-                    // An endfunc is encountered. Write the token.
-                    memory[pcode++] = static_cast<uint8_t>(token);
-                    // Now, back-patch the FUNC's jump address.
-                    if (!func_stack.empty()) {
-                        uint16_t func_jump_addr = func_stack.back();
-                        func_stack.pop_back();
-                        // Patch the address to point to the current pcode (right after this ENDFUNC)
-                        uint16_t jump_target = pcode;
-                        memory[func_jump_addr] = jump_target & 0xFF;
-                        memory[func_jump_addr + 1] = (jump_target >> 8) & 0xFF;
-                    }
-                    continue;
-                }
-                if (token == Tokens::ID::LABEL) {
-                    // It's a label. Store its name and current address.
-                    // The label itself is not written to the bytecode.
-                    // TextIO::print("DEBUG: Registered label '" + buffer + "' at address " + std::to_string(pcode) + "\n");
-                    label_addresses[buffer] = pcode;
-                    continue; // Move to the next token on the line
-                }
-                if (token == Tokens::ID::THEN) {
-                    // THEN is a compile-time marker used for grammar.
-                    // We don't need to write it to the bytecode.
-                    continue;
-                }
-                if (token == Tokens::ID::GOTO) {
-                    // Write the GOTO command token itself
-                    memory[pcode++] = static_cast<uint8_t>(token);
-
-                    // Immediately parse the next token on the line, which should be the label name
-                    Tokens::ID label_name_token = parse();
-
-                    // Check if we got a valid identifier for the label
-                    if (label_name_token == Tokens::ID::VARIANT || label_name_token == Tokens::ID::INT) {
-                        // The buffer now holds the label name, so write IT to the bytecode
-                        for (char c : buffer) {
-                            memory[pcode++] = c;
-                        }
-                        memory[pcode++] = 0; // Null terminator
-                    }
-                    else {
-                        // This is an error, e.g., "GOTO 123" or "GOTO +"
-                        Error::set(1, runtime_current_line); // Syntax Error
-                    }
-                    // We have now processed GOTO and its argument, so restart the main loop
-                    continue;
-                }
-                if (token == Tokens::ID::IF) {
-                    // Write the IF token, then leave a 2-byte placeholder for the jump address.
-                    memory[pcode++] = static_cast<uint8_t>(token);
-                    if_stack.push_back({ pcode, current_source_line }); // Save address of the placeholder
-                    pcode += 2; // Skip 2 bytes
-                    continue; // The expression after IF will be tokenized next
-                }
-                if (token == Tokens::ID::ELSE) {
-                    // Pop the IF's placeholder address from the stack.
-                    IfStackInfo if_info = if_stack.back();
-                    if_stack.pop_back();
-
-                    // Now, write the ELSE token and its own placeholder for jumping past the ELSE block.
-                    memory[pcode++] = static_cast<uint8_t>(token);
-                    if_stack.push_back({ pcode, current_source_line }); // Push address of ELSE's placeholder
-                    pcode += 2;
-
-                    // Go back and patch the original IF's jump to point to the instruction AFTER the ELSE's placeholder.
-                    uint16_t jump_target = pcode;
-                    memory[if_info.patch_address] = jump_target & 0xFF;
-                    memory[if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
-                    continue;
-                }
-                if (token == Tokens::ID::ENDIF) {
-                    // Pop the corresponding IF or ELSE placeholder address from the stack.
-                    IfStackInfo last_if_info = if_stack.back();
-                    if_stack.pop_back();
-
-                    // Patch it to point to the current location.
-                    uint16_t jump_target = pcode;
-                    memory[last_if_info.patch_address] = jump_target & 0xFF;
-                    memory[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
-
-                    // Don't write the ENDIF token, it's a compile-time marker.
-                    continue;
-                }
-                if (token == Tokens::ID::TO || token == Tokens::ID::STEP) {
-                    // These are compile-time markers for the FOR statement.
-                    // We parse them but don't write them to the bytecode.
-                    continue;
-                }
-                if (token == Tokens::ID::CALLFUNC) {
-                    // The buffer holds the function name (e.g., "lall").
-                    // Write the CALLFUNC token, then write the function name string.
-                    memory[pcode++] = static_cast<uint8_t>(token);
-                    for (char c : buffer) {
-                        memory[pcode++] = c;
-                    }
-                    memory[pcode++] = 0; // Null terminator
-
-                    // The arguments inside (...) will be tokenized as a normal expression
-                    // by subsequent loops, which is what the evaluator expects.
-                    continue;
-                }
-
-                // Write the token's ID to memory
-                memory[pcode++] = static_cast<uint8_t>(token);
-
-                // If the token has associated data (from the 'buffer'), process it.
-
-                if (token == Tokens::ID::STRING) {
-                    // Write the string characters to memory, followed by a null terminator
-                    for (char c : buffer) {
-                        memory[pcode++] = c;
-                    }
-                    memory[pcode++] = 0; // Null terminator
-                }
-                else if (token == Tokens::ID::NUMBER) {
-                    try {
-                        // Convert the string from the buffer to a full double
-                        double value = std::stod(buffer);
-
-                        // Copy the 8 raw bytes of the double into our bytecode
-                        memcpy(&memory[pcode], &value, sizeof(double));
-
-                        // Advance the program counter by the size of a double
-                        pcode += sizeof(double);
-                    }
-                    catch (const std::exception&) {
-                        // Handle cases where the number is invalid, e.g. "1.2.3"
-                        Error::set(1, runtime_current_line); // Syntax Error
-                    }
-                }
-                else if (!buffer.empty()) {
-                    // All other tokens that use the buffer (VARIANT, STRVAR, etc.)
-                    // only write their data if the buffer is not empty.
-                    if (token == Tokens::ID::VARIANT ||
-                        token == Tokens::ID::INT ||
-                        token == Tokens::ID::STRVAR ||
-                        token == Tokens::ID::FUNCREF ||
-                        token == Tokens::ID::ARRAY_ACCESS)
-                    {
-                        for (char c : buffer) {
-                            memory[pcode++] = c;
-                        }
-                        memory[pcode++] = 0;
-                    }
-                }
-                //else if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT ||
-                //    token == Tokens::ID::STRVAR || token == Tokens::ID::ARRAY_ACCESS /* || add other variable types */) {
-                //    // It's a variable. Write its name to memory, followed by a null terminator.
-                //    for (char c : buffer) {
-                //        memory[pcode++] = c;
-                //    }
-                //    memory[pcode++] = 0; // Null terminator
-                //}
-                //else if (token == Tokens::ID::FUNCREF) {
-                //    // It's a function reference. Write its name to memory.
-                //    for (char c : buffer) {
-                //        memory[pcode++] = c;
-                //    }
-                //    memory[pcode++] = 0; // Null terminator
-                //}
-
-            }
-
-        } while (token != Tokens::ID::NOCMD);
-    }
-    // After all tokens for the line are processed, append a C_CR token.
-    // This marks the end of the current line in the bytecode stream.
-    memory[pcode] = static_cast<uint8_t>(Tokens::ID::C_CR);
-    pcode++;
+    // Every line of bytecode ends with a carriage return token.
+    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::C_CR));
     return 0; // Success
 }
 
 void NeReLaBasic::runl() {
-    pcode = pend; // Set the program counter to the start of the freshly tokenized line
+    pcode = 0; 
     Error::clear();
 
-    // This is the execution loop for a single, direct-mode line.
-    if (memory[pcode] == static_cast<uint8_t>(Tokens::ID::NOCMD)) return;
+    // Check if there is anything to execute
+    if (direct_p_code.empty() || static_cast<Tokens::ID>(direct_p_code[pcode]) == Tokens::ID::NOCMD) {
+        return;
+    }
 
-    runtime_current_line = memory[pcode] | (memory[pcode + 1] << 8);
+    // Read the line number (it's '0' for direct mode, but we must skip it)
+    runtime_current_line = direct_p_code[pcode] | (direct_p_code[pcode + 1] << 8);
     pcode += 2;
 
-    while (true) {
-        Tokens::ID token = static_cast<Tokens::ID>(memory[pcode]);
+    // Execute statements until the end of the line (C_CR) or an error occurs
+    while (pcode < direct_p_code.size()) {
+        Tokens::ID token = static_cast<Tokens::ID>(direct_p_code[pcode]);
         if (token == Tokens::ID::C_CR || token == Tokens::ID::NOCMD || Error::get() != 0) {
             break;
         }
@@ -508,81 +519,118 @@ void NeReLaBasic::runl() {
     }
 }
 
-uint8_t NeReLaBasic::tokenize_program() {
-    uint16_t source_ptr = PROGRAM_START_ADDR;
-    pcode = pend;
-    current_source_line = 1;
-
-    std::string current_line;
-    while (true) {
-        if (memory[source_ptr] == static_cast<uint8_t>(Tokens::ID::NOCMD) && memory[source_ptr + 1] == 0) {
-            break;
-        }
-        uint8_t c = memory[source_ptr++];
-        if (c == '\n' || c == '\r') {
-            if (!current_line.empty()) {
-                // Tokenize the line we just read
-                if (tokenize(current_line, pcode, current_source_line) != 0) {
-                    Error::print();
-                    return 1;
-                }
-                pcode = this->pcode; // Update pcode after tokenizing
-                current_line.clear();
-            }
-            if (c == '\r' && memory[source_ptr] == '\n') {
-                source_ptr++;
-            }
-            current_source_line++;
-        }
-        else {
-            current_line += static_cast<char>(c);
-        }
-    }
-    if (!current_line.empty()) {
-        tokenize(current_line, pcode, current_source_line);
-        pcode = this->pcode;
-    }
-
-    memory[pcode] = static_cast<uint8_t>(Tokens::ID::NOCMD);
-    return 0;
-}
-void NeReLaBasic::run_program() {
-    TextIO::print("Compiling...\n");
-    // Step 0: Clear old state and set up for execution
-    for_stack.clear();
+uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code) {
+    out_p_code.clear(); // Start with empty bytecode
     if_stack.clear();
     func_stack.clear();
+    label_addresses.clear();
+    current_source_line = 1;
 
-    // Step 1: Compile the source at $A000 into bytecode at `pend`
-    if (tokenize_program() != 0) {
-        Error::print();
+    std::stringstream source_stream(source_code);
+    std::string current_line;
+
+    while (std::getline(source_stream, current_line)) {
+        // Handle potential '\r' at the end of lines
+        if (!current_line.empty() && current_line.back() == '\r') {
+            current_line.pop_back();
+        }
+
+        if (tokenize(current_line, current_source_line, out_p_code) != 0) {
+            Error::print();
+            return 1; // Tokenization failed
+        }
+        current_source_line++;
+    }
+
+    // Add final end-of-program marker
+    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NOCMD));
+
+    return 0; // Success
+}
+
+void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
+    // If there's no code to run, do nothing.
+    if (code_to_run.empty()) {
         return;
     }
+
+    // Set the active p_code pointer for the duration of this execution.
+    auto prev_active_p_code = active_p_code;
+    active_p_code = &code_to_run;
+    pcode = 0;
+    Error::clear();
+
+    // Main execution loop
+    while (pcode < active_p_code->size()) {
+        if (_kbhit()) {
+            char key = _getch(); // Get the pressed key
+
+            // The ESC key has an ASCII value of 27
+            if (key == 27) {
+                TextIO::print("\n--- BREAK ---\n");
+                break;                   // Exit the loop immediately
+            }
+            // Let's use the spacebar to pause
+            else if (key == ' ') {
+                TextIO::print("\n--- PAUSED (Press any key to resume) ---\n");
+                _getch(); // Wait for another key press to un-pause
+                TextIO::print("--- RESUMED ---\n");
+            }
+        }
+        // Use the active_p_code pointer to access the bytecode
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+            break;
+        }
+
+        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+        pcode += 2;
+
+        while (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
+            statement();
+            if (Error::get() != 0) break;
+        }
+
+        if (Error::get() != 0) {
+            // Error::print() is now called by the callers (start() and do_run())
+            break;
+        }
+
+        // Check bounds before consuming C_CR
+        if (pcode < active_p_code->size()) {
+            pcode++; // Consume the C_CR
+        }
+    }
+
+    // Clear the pointer so it's not pointing to stale data
+    active_p_code = prev_active_p_code;
+}
+
+void NeReLaBasic::run_program() {
 
     if (!if_stack.empty()) {
         // There are unclosed IF blocks. Get the line number of the last one.
         uint16_t error_line = if_stack.back().source_line;
         Error::set(4, error_line); // New Error: Missing ENDIF
-        Error::print();
         return; // Stop before running faulty code
     }
 
-    // Step 2: Clear old state and set up for execution
-    variables.clear(); // Erase all old variables
+    // Setup for execution
+    variables.clear();
+    arrays.clear();
+    call_stack.clear();
+    for_stack.clear();
     Error::clear();
-    pcode = pend; // Set program counter to the start of the new bytecode
+    pcode = 0; // Set program counter to the start of the bytecode
 
     TextIO::print("Running...\n");
-    // Step 3: The main execution loop for a program
-    while (true) {
-        if (memory[pcode] == static_cast<uint8_t>(Tokens::ID::NOCMD)) break;
+    // Main execution loop
+    while (pcode < program_p_code.size()) {
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) break;
 
-        // 1. Extract the line number prefix from the bytecode
-        runtime_current_line = memory[pcode] | (memory[pcode + 1] << 8);
+        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
         pcode += 2;
 
-        // 2. Execute statements until the end of the line (C_CR)
-        while (static_cast<Tokens::ID>(memory[pcode]) != Tokens::ID::C_CR && static_cast<Tokens::ID>(memory[pcode]) != Tokens::ID::NOCMD) {
+        while (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
             statement();
             if (Error::get() != 0) break;
         }
@@ -591,12 +639,12 @@ void NeReLaBasic::run_program() {
             Error::print();
             break;
         }
-        pcode++; // Consume the C_CR to move to the next line
+        pcode++; // Consume the C_CR
     }
 }
 
 void NeReLaBasic::statement() {
-    Tokens::ID token = static_cast<Tokens::ID>(memory[pcode]); // Peek at the token
+    Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]); // Peek at the token
 
     // In trace mode, print the token being executed.
     if (trace == 1) {
@@ -672,7 +720,18 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_return(*this);
         break;
-
+    case Tokens::ID::SUB:
+        pcode++;
+        Commands::do_sub(*this);
+        break;
+    case Tokens::ID::ENDSUB:
+        pcode++;
+        Commands::do_endsub(*this);
+        break;
+    case Tokens::ID::CALLSUB:
+        pcode++;
+        Commands::do_callsub(*this);
+        break;
     case Tokens::ID::LIST:
         pcode++;
         Commands::do_list(*this);
@@ -688,9 +747,29 @@ void NeReLaBasic::statement() {
         Commands::do_save(*this);
         break;
 
+    case Tokens::ID::COMPILE: 
+        pcode++;
+        Commands::do_compile(*this);
+        break;
+
     case Tokens::ID::RUN:
         pcode++;
         Commands::do_run(*this);
+        break;
+
+    case Tokens::ID::TRON:
+        pcode++;
+        Commands::do_tron(*this);
+        break;
+
+    case Tokens::ID::TROFF:
+        pcode++;
+        Commands::do_troff(*this);
+        break;
+
+    case Tokens::ID::DUMP:
+        pcode++;
+        Commands::do_dump(*this);
         break;
 
     case Tokens::ID::C_CR:
@@ -715,7 +794,7 @@ void NeReLaBasic::statement() {
 
 // Level 5: Handles highest-precedence items
 BasicValue NeReLaBasic::parse_primary() {
-    Tokens::ID token = static_cast<Tokens::ID>(memory[pcode]);
+    Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
     if (token == Tokens::ID::TRUE) {
         pcode++; return true;
@@ -728,7 +807,7 @@ BasicValue NeReLaBasic::parse_primary() {
         double value;
 
         // Read the raw 8 bytes of the double from our bytecode
-        memcpy(&value, &memory[pcode], sizeof(double));
+        memcpy(&value, &(*active_p_code)[pcode], sizeof(double));
 
         // Advance the program counter by the size of a double
         pcode += sizeof(double);
@@ -738,14 +817,14 @@ BasicValue NeReLaBasic::parse_primary() {
     if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) { // Treat all numeric vars as float now
         pcode++;
         std::string var_name;
-        while (memory[pcode] != 0) { var_name += memory[pcode++]; }
+        while ((*active_p_code)[pcode] != 0) { var_name += (*active_p_code)[pcode++]; }
         pcode++;
         return get_variable(*this, to_upper(var_name));
     }
     if (token == Tokens::ID::FUNCREF) {
         pcode++; // Consume FUNCREF token
         std::string func_name = "";
-        while (memory[pcode] != 0) { func_name += memory[pcode++]; }
+        while ((*active_p_code)[pcode] != 0) { func_name += (*active_p_code)[pcode++]; }
         pcode++; // consume null
 
         // Return a BasicValue containing our new FunctionRef type
@@ -755,33 +834,51 @@ BasicValue NeReLaBasic::parse_primary() {
         pcode++; // Consume STRING token
         std::string s_val;
         // Read the null-terminated string from bytecode
-        while (memory[pcode] != 0) { s_val += memory[pcode++]; }
+        while ((*active_p_code)[pcode] != 0) { s_val += (*active_p_code)[pcode++]; }
         pcode++; // consume null
         return s_val;
     }
     if (token == Tokens::ID::ARRAY_ACCESS) {
-        pcode++;
-        std::string array_name = to_upper(read_string(*this)); // Use a local helper
+        pcode++; // Consume ARRAY_ACCESS token
+        std::string base_name = to_upper(read_string(*this));
 
-        //if (static_cast<Tokens::ID>(memory[pcode++]) != Tokens::ID::C_LEFTBRACKET) {
-        //    Error::set(1, runtime_current_line); return false;
-        //}
-        BasicValue index_val = evaluate_expression();
-        int index = static_cast<int>(to_double(index_val));
-        if (static_cast<Tokens::ID>(memory[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-            Error::set(1, runtime_current_line); return false;
-        }
-        if (!arrays.count(array_name) || index < 0 || index >= arrays.at(array_name).size()) {
-            Error::set(24, runtime_current_line);
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTBRACKET) {
+            Error::set(1, runtime_current_line); // Syntax Error: expected '['
             return false;
         }
-        return arrays.at(array_name)[index];
+
+        // Evaluate the index expression
+        BasicValue index_val = evaluate_expression();
+        if (Error::get() != 0) return false;
+        int index = static_cast<int>(to_double(index_val));
+
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+            Error::set(1, runtime_current_line); return false;
+        }
+
+        // --- NEW LOGIC FOR ARRAY INDIRECTION ---
+        std::string actual_array_name = base_name;
+
+        // Check if `base_name` (e.g., "ARR") is a local variable that holds a string.
+        // This will be true when we call `print_array arr`.
+        BasicValue& var_lookup = get_variable(*this, base_name);
+        if (std::holds_alternative<std::string>(var_lookup)) {
+            // It is! The variable holds the name of the *real* array (e.g., "SOURCE_DATA").
+            actual_array_name = to_upper(std::get<std::string>(var_lookup));
+        }
+
+        // Now, use the actual_array_name to access the global arrays map.
+        if (arrays.find(actual_array_name) == arrays.end() || index < 0 || index >= arrays.at(actual_array_name).size()) {
+            Error::set(24, runtime_current_line); // Bad subscript
+            return false;
+        }
+        return arrays.at(actual_array_name)[index];
     }
 
     if (token == Tokens::ID::C_LEFTPAREN) {
         pcode++;
         auto result = evaluate_expression();
-        if (static_cast<Tokens::ID>(memory[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
             Error::set(1, runtime_current_line); return false;
         }
         pcode++;
@@ -816,9 +913,9 @@ BasicValue NeReLaBasic::parse_primary() {
 
             bool first_arg = true;
             // Keep parsing expressions as long as we haven't hit the closing parenthesis
-            while (pcode < memory.size() && static_cast<Tokens::ID>(memory[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            while (pcode < (*active_p_code).size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
                 if (!first_arg) {
-                    if (static_cast<Tokens::ID>(memory[pcode]) == Tokens::ID::C_COMMA) {
+                    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COMMA) {
                         pcode++; // Consume comma between arguments
                     }
                     else {
@@ -845,7 +942,7 @@ BasicValue NeReLaBasic::parse_primary() {
             pcode++; // Skip '('
             for (const auto& param_name : func_info.parameter_names) {
                 frame.local_variables[param_name] = evaluate_expression();
-                if (static_cast<Tokens::ID>(memory[pcode]) == Tokens::ID::C_COMMA) pcode++;
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COMMA) pcode++;
             }
             pcode++; // Skip ')'
 
@@ -855,7 +952,7 @@ BasicValue NeReLaBasic::parse_primary() {
 
             // Nested Execution Loop
             while (true) {
-                Tokens::ID func_token = static_cast<Tokens::ID>(memory[pcode]);
+                Tokens::ID func_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
                 if (Error:: get() != 0) break;
                 if (func_token == Tokens::ID::ENDFUNC || func_token == Tokens::ID::RETURN) {
                     statement(); break;
@@ -872,7 +969,7 @@ BasicValue NeReLaBasic::parse_primary() {
 BasicValue NeReLaBasic::parse_factor() {
     BasicValue left = parse_primary();
     while (true) {
-        Tokens::ID op = static_cast<Tokens::ID>(memory[pcode]);
+        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
         if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH) {
             pcode++;
             BasicValue right = parse_primary();
@@ -892,7 +989,7 @@ BasicValue NeReLaBasic::parse_factor() {
 BasicValue NeReLaBasic::parse_term() {
     BasicValue left = parse_factor();
     while (true) {
-        Tokens::ID op = static_cast<Tokens::ID>(memory[pcode]);
+        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
         if (op == Tokens::ID::C_PLUS || op == Tokens::ID::C_MINUS) {
             pcode++;
             BasicValue right = parse_factor();
@@ -929,7 +1026,7 @@ BasicValue NeReLaBasic::parse_term() {
 BasicValue NeReLaBasic::parse_comparison() {
     BasicValue left = parse_term(); // parse_term handles + and -
 
-    Tokens::ID op = static_cast<Tokens::ID>(memory[pcode]);
+    Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
     // Check if the next token is ANY of our comparison operators
     if (op == Tokens::ID::C_EQ || op == Tokens::ID::C_LT || op == Tokens::ID::C_GT ||
@@ -972,7 +1069,7 @@ BasicValue NeReLaBasic::parse_comparison() {
 BasicValue NeReLaBasic::evaluate_expression() {
     BasicValue left = parse_comparison();
     while (true) {
-        Tokens::ID op = static_cast<Tokens::ID>(memory[pcode]);
+        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
         if (op == Tokens::ID::AND || op == Tokens::ID::OR) {
             pcode++;
             BasicValue right = parse_comparison();
