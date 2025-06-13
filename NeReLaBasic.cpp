@@ -303,6 +303,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
                 }
             }
 
+            info.arity = info.parameter_names.size();
             info.start_pcode = out_p_code.size() + 3; // +3 for FUNC token and 2-byte address
             function_table[info.name] = info;
 
@@ -890,75 +891,109 @@ BasicValue NeReLaBasic::parse_primary() {
     }
     if (token == Tokens::ID::CALLFUNC) {
         pcode++; // Consume CALLFUNC token
-        std::string identifier_being_called = to_upper(read_string(*this)); // Use or create a helper for this
-        std::string real_func_to_call = to_upper(identifier_being_called);
+        std::string identifier_being_called = to_upper(read_string(*this));
+        std::string real_func_to_call = identifier_being_called;
 
-        // Check for higher-order function calls (a variable holding a FunctionRef)
+        // Check for higher-order function calls
         if (!function_table.count(real_func_to_call)) {
-            if (get_variable(*this, identifier_being_called).index() == 3) { // 3 is the index for FunctionRef in our variant
-                real_func_to_call = std::get<FunctionRef>(get_variable(*this, identifier_being_called)).name;
+            BasicValue& var = get_variable(*this, identifier_being_called);
+            if (std::holds_alternative<FunctionRef>(var)) {
+                real_func_to_call = std::get<FunctionRef>(var).name;
             }
         }
 
         if (!function_table.count(real_func_to_call)) {
-            Error::set(22, runtime_current_line); return false;
+            Error::set(22, runtime_current_line);
+            return false;
         }
 
         const auto& func_info = function_table.at(real_func_to_call);
+        std::vector<BasicValue> args;
 
-        // Is this a native C++ function?
-        if (func_info.native_impl != nullptr) {
-            std::vector<BasicValue> args;
-            pcode++; // Skip '('
-
-            bool first_arg = true;
-            // Keep parsing expressions as long as we haven't hit the closing parenthesis
-            while (pcode < (*active_p_code).size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                if (!first_arg) {
-                    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COMMA) {
-                        pcode++; // Consume comma between arguments
-                    }
-                    else {
-                        Error::set(1, runtime_current_line); // Syntax Error: Expected comma
-                        return false;
-                    }
-                }
-                args.push_back(evaluate_expression());
-                if (Error::get() != 0) return false; // Stop on expression error
-                first_arg = false;
-            }
-            pcode++; // Skip ')'
-
-            // Perform an arity check for functions that expect a fixed number of arguments
-            if (func_info.arity != -1 && args.size() != func_info.arity) {
-                Error::set(26, runtime_current_line); // New Error: Wrong number of arguments
-                return false;
-            }
-            // Execute the C++ function and return its result
-            return func_info.native_impl(args);
+        // --- NEW, ROBUST ARGUMENT PARSING LOGIC ---
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
+            Error::set(1, runtime_current_line); return false;
         }
-        else { // It's a user-defined BASIC function
-            StackFrame frame;
-            pcode++; // Skip '('
-            for (const auto& param_name : func_info.parameter_names) {
-                frame.local_variables[param_name] = evaluate_expression();
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COMMA) pcode++;
+
+        // Check for an empty argument list: ()
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTPAREN) {
+            pcode++; // Consume ')'
+        }
+        else {
+            // Loop to parse one or more comma-separated arguments
+            while (true) {
+                // Parse the argument expression itself
+                Tokens::ID arg_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (arg_token == Tokens::ID::VARIANT || arg_token == Tokens::ID::STRVAR) {
+                    pcode++;
+                    args.push_back(read_string(*this));
+                }
+                else {
+                    args.push_back(evaluate_expression());
+                    if (Error::get() != 0) return false;
+                }
+
+                // After parsing the argument, we expect either a comma or a closing parenthesis
+                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (separator == Tokens::ID::C_RIGHTPAREN) {
+                    pcode++; // Consume ')'
+                    break;   // End of arguments
+                }
+
+                if (separator != Tokens::ID::C_COMMA) {
+                    Error::set(1, runtime_current_line); // Syntax error: expected ',' or ')'
+                    return false;
+                }
+                pcode++; // Consume ',' and loop for the next argument
             }
-            pcode++; // Skip ')'
+        }
+
+        // Arity check
+        if (func_info.arity != -1 && args.size() != func_info.arity) {
+            Error::set(26, runtime_current_line); return false;
+        }
+
+        // --- Execution Logic for EXPRESSION context ---
+        if (func_info.native_impl != nullptr) {
+            return func_info.native_impl(args); // Native functions return immediately.
+        }
+        else {
+            // For user functions, we must execute them now to get the return value.
+            NeReLaBasic::StackFrame frame;
+            for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
+                if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
+            }
 
             frame.return_pcode = pcode;
             call_stack.push_back(frame);
             pcode = func_info.start_pcode;
 
-            // Nested Execution Loop
+            // Get the stack depth before we start executing the function.
+            size_t initial_stack_depth = call_stack.size();
+
+            // Loop as long as the function's frame is still on the stack.
             while (true) {
-                Tokens::ID func_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                if (Error:: get() != 0) break;
-                if (func_token == Tokens::ID::ENDFUNC || func_token == Tokens::ID::RETURN) {
-                    statement(); break;
+                if (Error::get() != 0) {
+                    // An error occurred during function execution.
+                    // Pop stack frames until we are back to the caller's context.
+                    while (!call_stack.empty() && call_stack.back().return_pcode != frame.return_pcode) {
+                        call_stack.pop_back();
+                    }
+                    return false; // Return a default error value
                 }
+
+                // If the stack is empty, something went wrong (e.g., ENDFUNC without RETURN)
+                if (call_stack.empty()) break;
+
+                // Check if the top stack frame's return address is OUR return address.
+                // If it is NOT, it means the function we called has returned.
+                if (call_stack.back().return_pcode != frame.return_pcode) {
+                    break;
+                }
+
                 statement();
             }
+            // The RETURN statement has set variables["RETVAL"].
             return variables["RETVAL"];
         }
     }    Error::set(1, runtime_current_line);

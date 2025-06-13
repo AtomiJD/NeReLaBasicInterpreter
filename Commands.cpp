@@ -463,70 +463,90 @@ void Commands::do_func(NeReLaBasic& vm) {
 }
 
 void Commands::do_callfunc(NeReLaBasic& vm) {
-    // This handles a function call that is a statement, like `luli()`.
-    // The CALLFUNC token was already consumed by statement(). pcode points to the name.
+    // This handles a function call that is a statement, like `my_func(arg1)`.
+    // The CALLFUNC token and function name have been consumed.
 
-    std::string identifier_being_called = read_string(vm);
-    std::string real_func_to_call = to_upper(identifier_being_called);
+    // The function name comes from the p_code stream.
+    std::string identifier_being_called = to_upper(read_string(vm));
+    std::string real_func_to_call = identifier_being_called;
 
-    // This logic is identical to the one in parse_primary
+    // Check for higher-order function calls, e.g. `my_var = my_func@; my_var()`
     if (!vm.function_table.count(real_func_to_call)) {
-        if (get_variable(vm, identifier_being_called).index() == 3) { // 3 is FunctionRef
-            real_func_to_call = std::get<FunctionRef>(get_variable(vm, identifier_being_called)).name;
+        BasicValue& var = get_variable(vm, identifier_being_called);
+        // Use holds_alternative for type safety instead of a magic number.
+        if (std::holds_alternative<FunctionRef>(var)) {
+            real_func_to_call = std::get<FunctionRef>(var).name;
         }
     }
 
     if (!vm.function_table.count(real_func_to_call)) {
-        Error::set(22, vm.runtime_current_line);
+        Error::set(22, vm.runtime_current_line); // Function not found
         return;
     }
 
     const auto& func_info = vm.function_table.at(real_func_to_call);
+    std::vector<BasicValue> args;
 
-    // The rest of this is a near-copy of the logic from parse_primary...
-    if (func_info.native_impl != nullptr) {
-        std::vector<BasicValue> args;
-        vm.pcode++; // Skip '('
-        bool first_arg = true;
-        while (vm.pcode < (*vm.active_p_code).size() && static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            if (!first_arg) {
-                if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) vm.pcode++;
-                else { Error::set(1, vm.runtime_current_line); return; }
+    // --- Smart Argument Parsing (from do_callsub) ---
+    // Consume the opening parenthesis '('
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
+        Error::set(1, vm.runtime_current_line); // Syntax error: expected '('
+        return;
+    }
+
+    bool first_arg = true;
+    while (vm.pcode < (*vm.active_p_code).size() && static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+        if (!first_arg) {
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_COMMA) {
+                Error::set(1, vm.runtime_current_line); // Missing comma
+                return;
             }
+        }
+
+        // Peek at the token to decide how to parse the argument.
+        Tokens::ID arg_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+        // If it's a simple variable, pass its name as a string for array-passing.
+        if (arg_token == Tokens::ID::VARIANT || arg_token == Tokens::ID::STRVAR) {
+            vm.pcode++; // consume token
+            std::string var_name = read_string(vm);
+            args.push_back(var_name);
+        }
+        else {
+            // Otherwise, it's a literal or complex expression. Evaluate it.
             args.push_back(vm.evaluate_expression());
             if (Error::get() != 0) return;
-            first_arg = false;
         }
-        vm.pcode++; // Skip ')'
-        if (func_info.arity != -1 && args.size() != func_info.arity) {
-            Error::set(26, vm.runtime_current_line); return;
-        }
-        // Call the native function but IGNORE the return value
+        first_arg = false;
+    }
+    vm.pcode++; // Consume the closing parenthesis ')'
+
+    // Arity check
+    if (func_info.arity != -1 && args.size() != func_info.arity) {
+        Error::set(26, vm.runtime_current_line); // Wrong number of arguments
+        return;
+    }
+
+    // --- Execution Logic ---
+    if (func_info.native_impl != nullptr) {
+        // Call the native C++ function. Since this is a statement, we discard the return value.
         func_info.native_impl(args);
     }
-    else { // It's a user-defined BASIC function
+    else {
+        // It's a user-defined BASIC function. Set up the stack frame.
         NeReLaBasic::StackFrame frame;
-        vm.pcode++; // Skip '('
-        for (const auto& param_name : func_info.parameter_names) {
-            frame.local_variables[param_name] = vm.evaluate_expression();
-            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) vm.pcode++;
+        for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
+            if (i < args.size()) {
+                frame.local_variables[func_info.parameter_names[i]] = args[i];
+            }
         }
-        vm.pcode++; // Skip ')'
 
+        // Set the return address and jump the program counter.
         frame.return_pcode = vm.pcode;
         vm.call_stack.push_back(frame);
         vm.pcode = func_info.start_pcode;
-
-        // Nested Execution Loop
-        while (true) {
-            Tokens::ID func_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (Error::get() != 0) break;
-            if (func_token == Tokens::ID::ENDFUNC || func_token == Tokens::ID::RETURN) {
-                vm.statement(); break;
-            }
-            vm.statement();
-        }
-        // IGNORE the return value stored in vm.variables["RETVAL"]
+        // The main `execute` loop will now take over and run the function's code.
+        // We no longer need a problematic nested loop here.
     }
 }
 
