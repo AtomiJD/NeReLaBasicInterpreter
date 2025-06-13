@@ -1,5 +1,7 @@
 Print "For Next Test"
 
+goto funci
+
 for i = 1 to 5
  print "lall: "; i
 next i
@@ -105,6 +107,8 @@ PRINT "The sine of PI/2 is roughly "; SIN(PI / 2)
 
 PRINT "--- String and Math Function Test COMPLETE ---"
 
+
+funci:
 Print "Functional tests"
 print
 Print "Function Definition and call functions"
@@ -121,15 +125,14 @@ print
 print "Done"
 print "------------------------"
 
-
 print "Using higher order functions"
 print
 
 func inc(ab)
     return ab+1
 endfunc
-func dec(cd)
-    return cd-1
+func dec(ac)
+    return ac-1
 endfunc
 
 func apply(fa,cc)

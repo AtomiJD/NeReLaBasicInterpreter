@@ -22,7 +22,9 @@ namespace {
         "Function/Sub name not found", //7
         "Wrong number of arguments", //8
         "RETURN without GOSUB/CALL", //9
-        "Array out of bounds" //10
+        "Array out of bounds", //10
+        "UNDEFINED LABEL ERROR", //11
+        "?FILE I/O ERROR" //12
         // Add more messages as needed
     };
 }

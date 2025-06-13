@@ -96,7 +96,7 @@ void NeReLaBasic::start() {
     }
 }
 
-Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm) {
+Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     buffer.clear();
 
     // --- Step 1: Skip any leading whitespace ---
@@ -115,7 +115,7 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm) {
     // Handle Comments
     if (currentChar == '\'') {
         prgptr = lineinput.length(); // Skip to end of line
-        return parse(*this); // Call parse again to get the NOCMD token
+        return parse(*this, is_start_of_statement); // Call parse again to get the NOCMD token
     }
 
     // Handle String Literals (including "")
@@ -164,9 +164,10 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm) {
         if (keywordToken != Tokens::ID::NOCMD) {
             return keywordToken;
         }
-
-        if (vm.function_table.count(buffer) && vm.function_table.at(buffer).is_procedure) {
-            return Tokens::ID::CALLSUB; // It's a command-style procedure call!
+        if (is_start_of_statement) {
+            if (vm.function_table.count(buffer) && vm.function_table.at(buffer).is_procedure) {
+                return Tokens::ID::CALLSUB; // It's a command-style procedure call!
+            }
         }
 
         size_t suffix_ptr = prgptr;
@@ -199,16 +200,6 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm) {
                 return Tokens::ID::VARIANT;
             }
         }
-
-        //char suffix = (prgptr < lineinput.length()) ? lineinput[prgptr] : '\0';
-        //switch (suffix) {
-        //case '$': prgptr++; buffer += '$'; return Tokens::ID::STRVAR;
-        //case '(': return Tokens::ID::CALLFUNC;
-        //case '[': return Tokens::ID::ARRAY_ACCESS;
-        //case '@': prgptr++; return Tokens::ID::FUNCREF;
-        //case ':': prgptr++; return Tokens::ID::LABEL;
-        //default: return Tokens::ID::VARIANT;
-        //}
     }
 
     // Handle Multi-Character Operators
@@ -255,12 +246,19 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
     out_p_code.push_back(lineNumber & 0xFF);
     out_p_code.push_back((lineNumber >> 8) & 0xFF);
 
+    bool is_start_of_statement = true;
+
     // Single loop to process all tokens on the line.
     while (prgptr < lineinput.length()) {
-        Tokens::ID token = parse(*this);
+        Tokens::ID token = parse(*this, is_start_of_statement);
 
         if (Error::get() != 0) return Error::get();
         if (token == Tokens::ID::NOCMD) break; // End of line reached.
+
+        // Any token other than a comment or label means we are no longer at the start of a statement
+        if (token != Tokens::ID::LABEL && token != Tokens::ID::REM) {
+            is_start_of_statement = false;
+        }
 
         // Use a switch for special compile-time tokens.
         switch (token) {
@@ -282,7 +280,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
             // Handle FUNC: parse the name, write a placeholder, and store the patch address.
         case Tokens::ID::FUNC: {
-            parse(*this); // Parse the next token, which is the function name.
+            parse(*this, is_start_of_statement); // Parse the next token, which is the function name.
             FunctionInfo info;
             info.name = to_upper(buffer);
 
@@ -329,7 +327,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
         }
         case Tokens::ID::SUB: {
             // The 'SUB' token has been consumed. The next token must be the name.
-            parse(*this);
+            parse(*this, is_start_of_statement);
             FunctionInfo info;
             info.name = to_upper(buffer);
             info.is_procedure = true;
@@ -390,7 +388,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             out_p_code.push_back(static_cast<uint8_t>(token));
 
             // Immediately parse the next token on the line, which should be the label name
-            Tokens::ID label_name_token = parse(*this);
+            Tokens::ID label_name_token = parse(*this, is_start_of_statement);
 
             // Check if we got a valid identifier for the label
             if (label_name_token == Tokens::ID::VARIANT || label_name_token == Tokens::ID::INT) {
@@ -467,7 +465,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
             // Now, parse the variable name that follows ("i") to advance the
             // parsing pointer, but we will discard the result.
-            parse(*this);
+            parse(*this, is_start_of_statement);
 
             // We have now processed the entire "next i" statement.
             // Continue to the next token on the line (if any).
@@ -497,29 +495,6 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
     return 0; // Success
 }
 
-void NeReLaBasic::runl() {
-    pcode = 0; 
-    Error::clear();
-
-    // Check if there is anything to execute
-    if (direct_p_code.empty() || static_cast<Tokens::ID>(direct_p_code[pcode]) == Tokens::ID::NOCMD) {
-        return;
-    }
-
-    // Read the line number (it's '0' for direct mode, but we must skip it)
-    runtime_current_line = direct_p_code[pcode] | (direct_p_code[pcode + 1] << 8);
-    pcode += 2;
-
-    // Execute statements until the end of the line (C_CR) or an error occurs
-    while (pcode < direct_p_code.size()) {
-        Tokens::ID token = static_cast<Tokens::ID>(direct_p_code[pcode]);
-        if (token == Tokens::ID::C_CR || token == Tokens::ID::NOCMD || Error::get() != 0) {
-            break;
-        }
-        statement();
-    }
-}
-
 uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code) {
     out_p_code.clear(); // Start with empty bytecode
     if_stack.clear();
@@ -544,9 +519,42 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code) {
     }
 
     // Add final end-of-program marker
+    out_p_code.push_back(0);
+    out_p_code.push_back(0);
     out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NOCMD));
 
     return 0; // Success
+}
+
+BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
+    if (func_info.native_impl != nullptr) {
+        return func_info.native_impl(args);
+    }
+
+    // --- FINAL, ROBUST NESTED EXECUTION LOGIC ---
+    size_t initial_stack_depth = call_stack.size();
+
+    NeReLaBasic::StackFrame frame;
+    for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
+        if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
+    }
+    frame.return_pcode = pcode;
+    call_stack.push_back(frame);
+    pcode = func_info.start_pcode;
+
+    while (call_stack.size() > initial_stack_depth) {
+        if (Error::get() != 0) {
+            while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
+            return false;
+        }
+        if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+            Error::set(25, runtime_current_line); // Missing RETURN
+            while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
+            break;
+        }
+        statement();
+    }
+    return variables["RETVAL"];
 }
 
 void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
@@ -579,12 +587,14 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
             }
         }
         // Use the active_p_code pointer to access the bytecode
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
-            break;
-        }
+
 
         runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
         pcode += 2;
+
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+            break;
+        }
 
         while (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
             statement();
@@ -592,7 +602,6 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
         }
 
         if (Error::get() != 0) {
-            // Error::print() is now called by the callers (start() and do_run())
             break;
         }
 
@@ -650,6 +659,8 @@ void NeReLaBasic::statement() {
     // In trace mode, print the token being executed.
     if (trace == 1) {
         TextIO::print("(");
+        TextIO::print_uw(runtime_current_line);
+        TextIO::print("/");
         TextIO::print_uwhex(static_cast<uint8_t>(token));
         TextIO::print(")");
     }
@@ -910,93 +921,32 @@ BasicValue NeReLaBasic::parse_primary() {
         const auto& func_info = function_table.at(real_func_to_call);
         std::vector<BasicValue> args;
 
-        // --- NEW, ROBUST ARGUMENT PARSING LOGIC ---
+        // Argument Parsing Logic (This is now correct)
         if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
             Error::set(1, runtime_current_line); return false;
         }
-
-        // Check for an empty argument list: ()
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTPAREN) {
-            pcode++; // Consume ')'
-        }
-        else {
-            // Loop to parse one or more comma-separated arguments
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
             while (true) {
-                // Parse the argument expression itself
-                Tokens::ID arg_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                if (arg_token == Tokens::ID::VARIANT || arg_token == Tokens::ID::STRVAR) {
-                    pcode++;
-                    args.push_back(read_string(*this));
-                }
-                else {
-                    args.push_back(evaluate_expression());
-                    if (Error::get() != 0) return false;
-                }
+                // The ONLY rule is to evaluate the expression. This is the fix.
+                args.push_back(evaluate_expression());
+                if (Error::get() != 0) return false;
 
-                // After parsing the argument, we expect either a comma or a closing parenthesis
                 Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                if (separator == Tokens::ID::C_RIGHTPAREN) {
-                    pcode++; // Consume ')'
-                    break;   // End of arguments
-                }
-
-                if (separator != Tokens::ID::C_COMMA) {
-                    Error::set(1, runtime_current_line); // Syntax error: expected ',' or ')'
-                    return false;
-                }
-                pcode++; // Consume ',' and loop for the next argument
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
+                pcode++;
             }
         }
+        pcode++; // Consume ')'
 
-        // Arity check
         if (func_info.arity != -1 && args.size() != func_info.arity) {
             Error::set(26, runtime_current_line); return false;
         }
 
-        // --- Execution Logic for EXPRESSION context ---
-        if (func_info.native_impl != nullptr) {
-            return func_info.native_impl(args); // Native functions return immediately.
-        }
-        else {
-            // For user functions, we must execute them now to get the return value.
-            NeReLaBasic::StackFrame frame;
-            for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
-                if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
-            }
-
-            frame.return_pcode = pcode;
-            call_stack.push_back(frame);
-            pcode = func_info.start_pcode;
-
-            // Get the stack depth before we start executing the function.
-            size_t initial_stack_depth = call_stack.size();
-
-            // Loop as long as the function's frame is still on the stack.
-            while (true) {
-                if (Error::get() != 0) {
-                    // An error occurred during function execution.
-                    // Pop stack frames until we are back to the caller's context.
-                    while (!call_stack.empty() && call_stack.back().return_pcode != frame.return_pcode) {
-                        call_stack.pop_back();
-                    }
-                    return false; // Return a default error value
-                }
-
-                // If the stack is empty, something went wrong (e.g., ENDFUNC without RETURN)
-                if (call_stack.empty()) break;
-
-                // Check if the top stack frame's return address is OUR return address.
-                // If it is NOT, it means the function we called has returned.
-                if (call_stack.back().return_pcode != frame.return_pcode) {
-                    break;
-                }
-
-                statement();
-            }
-            // The RETURN statement has set variables["RETVAL"].
-            return variables["RETVAL"];
-        }
-    }    Error::set(1, runtime_current_line);
+        // --- DELEGATE TO THE NEW HELPER FUNCTION ---
+        return execute_function_for_value(func_info, args);
+    }
+    Error::set(1, runtime_current_line);
     return false;
 }
 
