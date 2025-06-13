@@ -49,6 +49,9 @@ namespace {
         {"DUMP",    Tokens::ID::DUMP},
         {"COMPILE", Tokens::ID::COMPILE},
         {"REM",   Tokens::ID::REM},
+        {"MODULE",  Tokens::ID::MODULE},
+        {"EXPORT",  Tokens::ID::EXPORT},
+        {"IMPORT",  Tokens::ID::IMPORT},
         {"COLOR",   Tokens::ID::COLOR},
         {"LOCATE",  Tokens::ID::LOCATE},
         // ... and so on for all your keywords.

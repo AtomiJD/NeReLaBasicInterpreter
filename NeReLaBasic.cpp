@@ -297,6 +297,9 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
                 std::string param;
                 while (std::getline(pss, param, ',')) {
                     trim(param);
+                    if (param.length() > 2 && param.substr(param.length() - 2) == "[]") {
+                        param.resize(param.length() - 2);
+                    }
                     if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                 }
             }
@@ -346,6 +349,9 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             // Read from the string stream, using ',' as a delimiter.
             while (std::getline(pss, param_buffer, ',')) {
                 trim(param_buffer);
+                if (param_buffer.length() > 2 && param_buffer.substr(param_buffer.length() - 2) == "[]") {
+                    param_buffer.resize(param_buffer.length() - 2);
+                }
                 if (!param_buffer.empty()) {
                     info.parameter_names.push_back(to_upper(param_buffer));
                 }
@@ -528,7 +534,7 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code) {
 
 BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
     if (func_info.native_impl != nullptr) {
-        return func_info.native_impl(args);
+        return func_info.native_impl(*this, args);
     }
 
     // --- FINAL, ROBUST NESTED EXECUTION LOGIC ---
@@ -859,32 +865,35 @@ BasicValue NeReLaBasic::parse_primary() {
             return false;
         }
 
-        // Evaluate the index expression
-        BasicValue index_val = evaluate_expression();
-        if (Error::get() != 0) return false;
-        int index = static_cast<int>(to_double(index_val));
-
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-            Error::set(1, runtime_current_line); return false;
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTBRACKET) {
+            // Case: array[], this is an array reference.
+            pcode++; // Consume ']'
+            // Return the array's name as a string value.
+            return base_name;
         }
+        else {
+            // Case: array[index], this is an element access.
+            BasicValue index_val = evaluate_expression();
+            if (Error::get() != 0) return false;
+            int index = static_cast<int>(to_double(index_val));
 
-        // --- NEW LOGIC FOR ARRAY INDIRECTION ---
-        std::string actual_array_name = base_name;
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+                Error::set(1, runtime_current_line); return false;
+            }
 
-        // Check if `base_name` (e.g., "ARR") is a local variable that holds a string.
-        // This will be true when we call `print_array arr`.
-        BasicValue& var_lookup = get_variable(*this, base_name);
-        if (std::holds_alternative<std::string>(var_lookup)) {
-            // It is! The variable holds the name of the *real* array (e.g., "SOURCE_DATA").
-            actual_array_name = to_upper(std::get<std::string>(var_lookup));
+            // --- The existing indirection logic for reading a value ---
+            std::string actual_array_name = base_name;
+            BasicValue& var_lookup = get_variable(*this, base_name);
+            if (std::holds_alternative<std::string>(var_lookup)) {
+                actual_array_name = to_upper(std::get<std::string>(var_lookup));
+            }
+
+            if (arrays.find(actual_array_name) == arrays.end() || index < 0 || index >= arrays.at(actual_array_name).size()) {
+                Error::set(10, runtime_current_line); // Use error 10 for consistency (Array out of bounds)
+                return false;
+            }
+            return arrays.at(actual_array_name)[index];
         }
-
-        // Now, use the actual_array_name to access the global arrays map.
-        if (arrays.find(actual_array_name) == arrays.end() || index < 0 || index >= arrays.at(actual_array_name).size()) {
-            Error::set(24, runtime_current_line); // Bad subscript
-            return false;
-        }
-        return arrays.at(actual_array_name)[index];
     }
 
     if (token == Tokens::ID::C_LEFTPAREN) {
@@ -955,14 +964,22 @@ BasicValue NeReLaBasic::parse_factor() {
     BasicValue left = parse_primary();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH) {
+        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD) {
             pcode++;
             BasicValue right = parse_primary();
-            if (op == Tokens::ID::C_ASTR) left = to_double(left) * to_double(right);
-            else {
+            if (op == Tokens::ID::C_ASTR) {
+                left = to_double(left) * to_double(right);
+            }
+            else if (op == Tokens::ID::C_SLASH) {
                 double r = to_double(right);
                 if (r == 0.0) { Error::set(2, runtime_current_line); return false; }
                 left = to_double(left) / r;
+            }
+            else { // op == Tokens::ID::MOD
+                long long l = static_cast<long long>(to_double(left));
+                long long r = static_cast<long long>(to_double(right));
+                if (r == 0) { Error::set(2, runtime_current_line); return false; } // Division by zero
+                left = static_cast<double>(l % r);
             }
         }
         else break;

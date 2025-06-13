@@ -12,20 +12,33 @@ namespace {
     // A table of error messages. We can expand this as we go.
     // Using a vector of strings makes it easy to manage.
     const std::vector<std::string> errorMessages = {
-        "OK",                  // 0
-        "Syntax Error",        // 1
-        "Calculation Error",   // 2
-        "Variable not found",  // 3
-        "Unclosed IF/ENDIF",   // 4
-        "Unclosed FUNC/ENDFUNC",// 5
-        "File not found",       // 6
-        "Function/Sub name not found", //7
-        "Wrong number of arguments", //8
-        "RETURN without GOSUB/CALL", //9
-        "Array out of bounds", //10
-        "UNDEFINED LABEL ERROR", //11
-        "?FILE I/O ERROR" //12
-        // Add more messages as needed
+            "OK",                               // 0
+            "Syntax Error",                     // 1
+            "Calculation Error",                // 2
+            "Variable not found",               // 3
+            "Unclosed IF/ENDIF",                // 4
+            "Unclosed FUNC/ENDFUNC",            // 5
+            "File not found",                   // 6
+            "Function/Sub name not found",      // 7
+            "Wrong number of arguments",        // 8
+            "RETURN without GOSUB/CALL",        // 9
+            "Array out of bounds",              // 10
+            "Undefined label",                  // 11
+            "File I/O Error",                   // 12
+            "Invalid token in expression",      // 13
+            "Unclosed loop",                    // 14
+            "Type Mismatch",                    // 15
+            "Reserved 16",                      // 16
+            "Reserved 17",                      // 17
+            "Reserved 18",                      // 18
+            "Reserved 19",                      // 19
+            "Reserved 20",                      // 20
+            "NEXT without FOR",                 // 21
+            "Undefined function",               // 22
+            "RETURN without function call",     // 23
+            "Bad array subscript",              // 24
+            "Function or Sub is missing RETURN or END", // 25
+            "Incorrect number of arguments"     // 26
     };
 }
 

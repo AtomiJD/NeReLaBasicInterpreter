@@ -65,13 +65,27 @@ std::string wildcard_to_regex(const std::string& wildcard) {
 // --- String Functions ---
 
 // LEN(string_expression)
-BasicValue builtin_len(const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0; // Return 0 on error
-    return static_cast<double>(to_string(args[0]).length());
+BasicValue builtin_len(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, 0); // Wrong number of arguments
+        return 0.0;
+    }
+
+    const BasicValue& val = args[0];
+    // Check if the argument is a string that matches an array name
+    if (std::holds_alternative<std::string>(val)) {
+        std::string name = to_upper(std::get<std::string>(val));
+        if (vm.arrays.count(name)) {
+            // It's a reference to an array! Return the array's size.
+            return static_cast<double>(vm.arrays.at(name).size());
+        }
+    }
+    // Otherwise, treat it as a normal string and return its length.
+    return static_cast<double>(to_string(val).length());
 }
 
 // LEFT$(string, n)
-BasicValue builtin_left_str(const std::vector<BasicValue>& args) {
+BasicValue builtin_left_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) return std::string("");
     std::string source = to_string(args[0]);
     int count = static_cast<int>(to_double(args[1]));
@@ -80,7 +94,7 @@ BasicValue builtin_left_str(const std::vector<BasicValue>& args) {
 }
 
 // RIGHT$(string, n)
-BasicValue builtin_right_str(const std::vector<BasicValue>& args) {
+BasicValue builtin_right_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) return std::string("");
     std::string source = to_string(args[0]);
     int count = static_cast<int>(to_double(args[1]));
@@ -90,7 +104,7 @@ BasicValue builtin_right_str(const std::vector<BasicValue>& args) {
 }
 
 // MID$(string, start, [length]) - Overloaded
-BasicValue builtin_mid_str(const std::vector<BasicValue>& args) {
+BasicValue builtin_mid_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() < 2 || args.size() > 3) return std::string("");
 
     std::string source = to_string(args[0]);
@@ -108,7 +122,7 @@ BasicValue builtin_mid_str(const std::vector<BasicValue>& args) {
 }
 
 // LCASE$(string)
-BasicValue builtin_lcase_str(const std::vector<BasicValue>& args) {
+BasicValue builtin_lcase_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return std::string("");
     std::string s = to_string(args[0]);
     std::transform(s.begin(), s.end(), s.begin(),
@@ -117,7 +131,7 @@ BasicValue builtin_lcase_str(const std::vector<BasicValue>& args) {
 }
 
 // UCASE$(string)
-BasicValue builtin_ucase_str(const std::vector<BasicValue>& args) {
+BasicValue builtin_ucase_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return std::string("");
     std::string s = to_string(args[0]);
     std::transform(s.begin(), s.end(), s.begin(),
@@ -126,7 +140,7 @@ BasicValue builtin_ucase_str(const std::vector<BasicValue>& args) {
 }
 
 // TRIM$(string)
-BasicValue builtin_trim_str(const std::vector<BasicValue>& args) {
+BasicValue builtin_trim_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return std::string("");
     std::string s = to_string(args[0]);
     s.erase(0, s.find_first_not_of(" \t\n\r"));
@@ -135,14 +149,14 @@ BasicValue builtin_trim_str(const std::vector<BasicValue>& args) {
 }
 
 // CHR$(number)
-BasicValue builtin_chr_str(const std::vector<BasicValue>& args) {
+BasicValue builtin_chr_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return std::string("");
     char c = static_cast<char>(static_cast<int>(to_double(args[0])));
     return std::string(1, c);
 }
 
 // ASC(string)
-BasicValue builtin_asc(const std::vector<BasicValue>& args) {
+BasicValue builtin_asc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return 0.0;
     std::string s = to_string(args[0]);
     if (s.empty()) return 0.0;
@@ -150,7 +164,7 @@ BasicValue builtin_asc(const std::vector<BasicValue>& args) {
 }
 
 // INSTR([start], haystack$, needle$) - Overloaded
-BasicValue builtin_instr(const std::vector<BasicValue>& args) {
+BasicValue builtin_instr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() < 2 || args.size() > 3) return 0.0;
 
     size_t start_pos = 0;
@@ -178,7 +192,7 @@ BasicValue builtin_instr(const std::vector<BasicValue>& args) {
     }
 }
 // INKEY$()
-BasicValue builtin_inkey(const std::vector<BasicValue>& args) {
+BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // This function takes no arguments
     if (!args.empty()) {
         // Optional: Set an error for "Too many arguments"
@@ -200,25 +214,25 @@ BasicValue builtin_inkey(const std::vector<BasicValue>& args) {
 // --- Arithmetic Functions ---
 
 // SIN(numeric_expression)
-BasicValue builtin_sin(const std::vector<BasicValue>& args) {
+BasicValue builtin_sin(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return 0.0;
     return std::sin(to_double(args[0]));
 }
 
 // COS(numeric_expression)
-BasicValue builtin_cos(const std::vector<BasicValue>& args) {
+BasicValue builtin_cos(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return 0.0;
     return std::cos(to_double(args[0]));
 }
 
 // TAN(numeric_expression)
-BasicValue builtin_tan(const std::vector<BasicValue>& args) {
+BasicValue builtin_tan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return 0.0;
     return std::tan(to_double(args[0]));
 }
 
 // SQR(numeric_expression) - Square Root
-BasicValue builtin_sqr(const std::vector<BasicValue>& args) {
+BasicValue builtin_sqr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return 0.0;
     double val = to_double(args[0]);
     return (val < 0) ? 0.0 : std::sqrt(val); // Return 0 for negative input
@@ -226,7 +240,7 @@ BasicValue builtin_sqr(const std::vector<BasicValue>& args) {
 
 // --- Time Functions ---
 // TICK() -> returns milliseconds since the program started
-BasicValue builtin_tick(const std::vector<BasicValue>& args) {
+BasicValue builtin_tick(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // This function takes no arguments
     if (!args.empty()) {
         // Optional: Set an error for "Wrong number of arguments"
@@ -244,7 +258,7 @@ BasicValue builtin_tick(const std::vector<BasicValue>& args) {
 }
 
 // --- Procedures ---
-BasicValue builtin_cls(const std::vector<BasicValue>& args) {
+BasicValue builtin_cls(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // Procedures can still take arguments, but CLS doesn't need any.
     // We could add error checking for args.size() if we wanted.
     TextIO::clearScreen();
@@ -253,7 +267,7 @@ BasicValue builtin_cls(const std::vector<BasicValue>& args) {
 
 // --- Filesystem ---
 // DIR [path_string]
-BasicValue builtin_dir(const std::vector<BasicValue>& args) {
+BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     try {
         fs::path target_path("."); // Default to current directory
         std::string wildcard = "*";   // Default to all files
@@ -319,7 +333,7 @@ BasicValue builtin_dir(const std::vector<BasicValue>& args) {
 }
 
 // CD path_string
-BasicValue builtin_cd(const std::vector<BasicValue>& args) {
+BasicValue builtin_cd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
         Error::set(8, 0); // Wrong number of arguments
         return false;
@@ -337,7 +351,7 @@ BasicValue builtin_cd(const std::vector<BasicValue>& args) {
 }
 
 // PWD
-BasicValue builtin_pwd(const std::vector<BasicValue>& args) {
+BasicValue builtin_pwd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     try {
         TextIO::print(fs::current_path().string() + "\n");
     }
@@ -350,7 +364,7 @@ BasicValue builtin_pwd(const std::vector<BasicValue>& args) {
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm) {
     // Helper lambda to make registration cleaner
-    auto register_func = [&](const std::string& name, int arity, NativeFunction func_ptr) {
+    auto register_func = [&](const std::string& name, int arity, NeReLaBasic::NativeFunction func_ptr) {
         NeReLaBasic::FunctionInfo info;
         info.name = name;
         info.arity = arity;
@@ -383,7 +397,7 @@ void register_builtin_functions(NeReLaBasic& vm) {
 
     // --- Register Procedures ---
 
-    auto register_proc = [&](const std::string& name, int arity, NativeFunction func_ptr) {
+    auto register_proc = [&](const std::string& name, int arity, NeReLaBasic::NativeFunction func_ptr) {
         NeReLaBasic::FunctionInfo info;
         info.name = name;
         info.arity = arity;

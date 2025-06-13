@@ -73,6 +73,8 @@ namespace Tokens {
         NEXT = 0x45,
         STEP = 0x46,
         CALLFUNC = 0x47,
+        EXPORT = 0x48, // c++20 module
+        IMPORT = 0x49, // c++20 module
         FLUPP = 0x4C,
         INPUT = 0x4D, // continue with 0xBA!
         GET = 0xBA,

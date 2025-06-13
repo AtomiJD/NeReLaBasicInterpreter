@@ -1,29 +1,38 @@
-func apply(fa,cc)
-    return fa(cc,2)
-endfunc
+Dim s_map[20]
+Dim o_map[20]
 
-func luli()
-    print "atomi rockt"
-    return 0
-endfunc
+s_map = [1,5,8,7,45,66,12]
 
-sub pfa
- print "lala"
+sub printresult result[]
+   for i = 0 to len(result)-1
+       if result[i]>0 then
+           print result[i], " ";
+       endif
+   next i
 endsub
 
-a="Atomi"
+func iseven(a)
+   print "Im in Is even:", a
+   if a mod 2 = 0 then
+      r=1
+   else
+      r=0
+   endif
+   return r
+endfunc
 
-print apply(left$@,a)
+func filter(fu,in[],out[])
+   j=0
+   for i = 0 to len(in) - 1
+      m=fu(in[i])
+      if m = 1 then
+         out[j]=in[i]
+         j=j+1
+      endif
+   next i
+endfunc
 
-print apply(RIGHT$@,a)
+filter(iseven@,s_map[],o_map[])
 
-dim a[20]
-
-a = [1,2,3,4,5]
-
-
-luli()
-pfa
-
-
-
+print "Result filter: "
+printresult o_map[]

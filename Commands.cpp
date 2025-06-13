@@ -266,8 +266,16 @@ void Commands::do_let(NeReLaBasic& vm) {
         BasicValue value_to_assign = vm.evaluate_expression();
         if (Error::get() != 0) return;
 
-        if (vm.arrays.count(name) && index >= 0 && index < vm.arrays.at(name).size()) {
-            vm.arrays.at(name)[index] = value_to_assign;
+        std::string actual_array_name = name;
+        // Check if `name` (e.g., "OUT") is a variable that holds an array name.
+        BasicValue& var_lookup = get_variable(vm, name);
+        if (std::holds_alternative<std::string>(var_lookup)) {
+            // It is! The variable holds the name of the *real* array.
+            actual_array_name = to_upper(std::get<std::string>(var_lookup));
+        }
+
+        if (vm.arrays.count(actual_array_name) && index >= 0 && index < vm.arrays.at(actual_array_name).size()) {
+            vm.arrays.at(actual_array_name)[index] = value_to_assign;
         }
         else {
             Error::set(10, vm.runtime_current_line); // Bad subscript
@@ -510,7 +518,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
 
     // --- Execution Logic ---
     if (func_info.native_impl != nullptr) {
-        func_info.native_impl(args);
+        func_info.native_impl(vm, args);
     }
     else {
         NeReLaBasic::StackFrame frame;
@@ -588,24 +596,17 @@ void Commands::do_callsub(NeReLaBasic& vm) {
     const auto& proc_info = vm.function_table.at(proc_name);
     std::vector<BasicValue> args;
 
-    // --- CORRECTED, SIMPLIFIED ARGUMENT PARSING ---
-    //for (int i = 0; i < proc_info.arity; ++i) {
-    //    if (i > 0) {
-    //        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_COMMA) {
-    //            Error::set(1, vm.runtime_current_line); return;
-    //        }
-    //    }
-    //    args.push_back(vm.evaluate_expression());
-    //    if (Error::get() != 0) return;
-    //}
+    Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-    while (true) {
-        args.push_back(vm.evaluate_expression());
-        if (Error::get() != 0) return;
-        Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-        if (separator == Tokens::ID::C_CR) break;
-        if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
-        vm.pcode++;
+    if (token != Tokens::ID::C_CR) {
+        while (true) {
+            args.push_back(vm.evaluate_expression());
+            if (Error::get() != 0) return;
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (separator == Tokens::ID::C_CR) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+            vm.pcode++;
+        }
     }
 
     if (proc_info.arity != -1 && args.size() != proc_info.arity) {
@@ -613,7 +614,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
     }
 
     if (proc_info.native_impl != nullptr) {
-        proc_info.native_impl(args);
+        proc_info.native_impl(vm, args);
     }
     else {
         NeReLaBasic::StackFrame frame;

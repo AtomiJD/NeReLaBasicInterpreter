@@ -3,14 +3,11 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <map>
 #include <unordered_map>
 #include "Types.hpp"
 #include "Tokens.hpp"
 #include <functional> 
-
-// A type alias for our native C++ function pointers.
-// All native functions will take a vector of arguments and return a single BasicValue.
-using NativeFunction = std::function<BasicValue(const std::vector<BasicValue>&)>;
 
 class NeReLaBasic {
 public:
@@ -37,16 +34,17 @@ public:
         uint16_t loop_start_pcode = 0; // Address to jump back to on NEXT
     };
 
+    // A type alias for our native C++ function pointers.
+    // All native functions will take a vector of arguments and return a single BasicValue.
+    using NativeFunction = std::function<BasicValue(NeReLaBasic&, const std::vector<BasicValue>&)>;
+
     struct FunctionInfo {
         std::string name;
         int arity = 0; // The number of arguments the function takes.
         bool is_procedure = false;
-
-        // For user-defined functions:
+        bool is_exported = false;
         uint16_t start_pcode = 0;
         std::vector<std::string> parameter_names;
-
-        // For native C++ functions:
         NativeFunction native_impl = nullptr; // A pointer to a C++ function
     };
 
@@ -58,6 +56,13 @@ public:
     struct IfStackInfo {
         uint16_t patch_address; // The address in the bytecode we need to patch
         uint16_t source_line;   // The source code line number of the IF statement
+    };
+
+    struct BasicModule {
+        std::string name;
+        // We will eventually store p_code and other data here too.
+        // For now, we only care about the exported function definitions.
+        std::map<std::string, NeReLaBasic::FunctionInfo> exported_functions;
     };
 
 
@@ -77,8 +82,14 @@ public:
     std::unordered_map<std::string, BasicValue> variables;
     std::unordered_map<std::string, std::vector<BasicValue>> arrays;
 
-
     std::unordered_map<std::string, uint16_t> label_addresses;
+
+    // --- C++ Modules ---
+    std::map<std::string, BasicModule> compiled_modules;
+    // True if the compiler is currently processing a module file
+    bool is_compiling_module = false;
+    // Holds the name of the module currently being compiled
+    std::string current_module_name;
 
     // --- Member Functions ---
     NeReLaBasic(); // Constructor
