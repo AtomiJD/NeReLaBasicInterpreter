@@ -12,7 +12,6 @@ sub printresult result[]
 endsub
 
 func iseven(a)
-   print "Im in Is even:", a
    if a mod 2 = 0 then
       r=1
    else

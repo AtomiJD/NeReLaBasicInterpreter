@@ -43,14 +43,21 @@ public:
         int arity = 0; // The number of arguments the function takes.
         bool is_procedure = false;
         bool is_exported = false;
+        std::string module_name;
         uint16_t start_pcode = 0;
         std::vector<std::string> parameter_names;
         NativeFunction native_impl = nullptr; // A pointer to a C++ function
     };
 
+    using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>;
+
     struct StackFrame {
+//        std::string return_module_name;
+        //std::map<std::string, FunctionInfo> original_function_table;
         std::unordered_map<std::string, BasicValue> local_variables;
         uint16_t return_pcode = 0; // Where to jump back to after the function ends
+        const std::vector<uint8_t>* return_p_code_ptr;
+        FunctionTable* previous_function_table_ptr;
     };
 
     struct IfStackInfo {
@@ -60,9 +67,8 @@ public:
 
     struct BasicModule {
         std::string name;
-        // We will eventually store p_code and other data here too.
-        // For now, we only care about the exported function definitions.
-        std::map<std::string, NeReLaBasic::FunctionInfo> exported_functions;
+        std::vector<uint8_t> p_code;
+        FunctionTable function_table;
     };
 
 
@@ -74,9 +80,19 @@ public:
     std::vector<IfStackInfo> if_stack;
     std::vector<ForLoopInfo> for_stack;
 
-    std::unordered_map<std::string, FunctionInfo> function_table;
+    //std::unordered_map<std::string, FunctionInfo> function_table;
     std::vector<StackFrame> call_stack;
     std::vector<uint16_t> func_stack;
+
+    // The main program has its own function table
+    FunctionTable main_function_table;
+
+    // Each compiled module's function table is stored here
+    std::map<std::string, FunctionTable> module_function_tables;
+
+    // This single pointer represents the currently active function table.
+    // At runtime, we just change what this pointer points to.
+    FunctionTable* active_function_table = nullptr;
 
     // -- - Symbol Tables for Variables-- -
     std::unordered_map<std::string, BasicValue> variables;
@@ -94,7 +110,6 @@ public:
     // --- Member Functions ---
     NeReLaBasic(); // Constructor
     void start();  // The main REPL
-    void run_program();
     void execute(const std::vector<uint8_t>& code_to_run);
 
 
@@ -104,7 +119,8 @@ public:
     BasicValue parse_term();
     BasicValue parse_primary();
     BasicValue parse_factor();
-    uint8_t tokenize_program(std::vector<uint8_t>& out_p_code);
+    bool compile_module(const std::string& module_name, const std::string& module_source_code);
+    uint8_t tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source);
     void statement();
 
 private:
@@ -114,7 +130,7 @@ private:
 
     // --- Lexer---
     Tokens::ID parse(NeReLaBasic& vm, bool is_start_of_statement);
-    uint8_t tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code);
+    uint8_t tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, FunctionTable& compilation_func_table);
 
     // --- Execution Engine ---
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);

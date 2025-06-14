@@ -1,6 +1,6 @@
-#include "BuiltinFunctions.hpp"
 #include "Commands.hpp"
 #include "NeReLaBasic.hpp"
+#include "BuiltinFunctions.hpp"
 #include "TextIO.hpp"
 #include "Error.hpp"
 #include <chrono>
@@ -362,14 +362,14 @@ BasicValue builtin_pwd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 }
 
 // --- The Registration Function ---
-void register_builtin_functions(NeReLaBasic& vm) {
+void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
     // Helper lambda to make registration cleaner
     auto register_func = [&](const std::string& name, int arity, NeReLaBasic::NativeFunction func_ptr) {
         NeReLaBasic::FunctionInfo info;
         info.name = name;
         info.arity = arity;
         info.native_impl = func_ptr;
-        vm.function_table[to_upper(info.name)] = info;
+        table_to_populate[to_upper(info.name)] = info;
     };
 
     // --- Register String Functions ---
@@ -403,7 +403,7 @@ void register_builtin_functions(NeReLaBasic& vm) {
         info.arity = arity;
         info.native_impl = func_ptr;
         info.is_procedure = true; // Mark this as a procedure
-        vm.function_table[to_upper(info.name)] = info;
+        table_to_populate[to_upper(info.name)] = info;
         };
 
     // --- Register Methods ---

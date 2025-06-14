@@ -482,18 +482,18 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
     std::string identifier_being_called = to_upper(read_string(vm));
     std::string real_func_to_call = identifier_being_called;
 
-    if (!vm.function_table.count(real_func_to_call)) {
+    if (!vm.active_function_table->count(real_func_to_call)) {
         BasicValue& var = get_variable(vm, identifier_being_called);
         if (std::holds_alternative<FunctionRef>(var)) {
             real_func_to_call = std::get<FunctionRef>(var).name;
         }
     }
 
-    if (!vm.function_table.count(real_func_to_call)) {
+    if (!vm.active_function_table->count(real_func_to_call)) {
         Error::set(22, vm.runtime_current_line); return;
     }
 
-    const auto& func_info = vm.function_table.at(real_func_to_call);
+    const auto& func_info = vm.active_function_table->at(real_func_to_call);
     std::vector<BasicValue> args;
 
     // --- CORRECTED, SIMPLIFIED ARGUMENT PARSING ---
@@ -522,11 +522,20 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
     }
     else {
         NeReLaBasic::StackFrame frame;
-        for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
-            if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
-        }
+        frame.return_p_code_ptr = vm.active_p_code;
         frame.return_pcode = vm.pcode;
+        // NEW: Save the entire function table of the caller
+        frame.previous_function_table_ptr = vm.active_function_table;
+
         vm.call_stack.push_back(frame);
+
+        // --- CONTEXT SWITCH ---
+        if (!func_info.module_name.empty() && vm.compiled_modules.count(func_info.module_name)) {
+            auto& target_module = vm.compiled_modules[func_info.module_name];
+            vm.active_p_code = &target_module.p_code;
+            vm.active_function_table = &target_module.function_table;
+        }
+
         vm.pcode = func_info.start_pcode;
     }
 }
@@ -547,7 +556,9 @@ void Commands::do_return(NeReLaBasic& vm) {
 
     // Pop the stack and set pcode to the return address.
     auto& frame = vm.call_stack.back();
-    vm.pcode = frame.return_pcode;
+    vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
+    vm.pcode = frame.return_pcode;              // Restore program counter
+    vm.active_function_table = frame.previous_function_table_ptr;
     vm.call_stack.pop_back();
 }
 
@@ -561,7 +572,9 @@ void Commands::do_endfunc(NeReLaBasic& vm) {
 
     // Pop the stack and set pcode to the return address.
     auto& frame = vm.call_stack.back();
-    vm.pcode = frame.return_pcode;
+    vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
+    vm.pcode = frame.return_pcode;              // Restore program counter
+    vm.active_function_table = frame.previous_function_table_ptr;
     vm.call_stack.pop_back();
 }
 
@@ -572,28 +585,13 @@ void Commands::do_sub(NeReLaBasic& vm) {
     Commands::do_func(vm);
 }
 
-// At runtime, ENDSUB handles returning from a procedure call.
-// It pops the call stack and restores the program counter.
-void Commands::do_endsub(NeReLaBasic& vm) {
-    if (vm.call_stack.empty()) {
-        Error::set(9, vm.runtime_current_line); // RETURN without GOSUB/CALL
-        return;
-    }
-    // For a procedure, there is no return value to set.
-    // We just pop the stack and set pcode to the return address.
-    auto& frame = vm.call_stack.back();
-    vm.pcode = frame.return_pcode;
-    vm.call_stack.pop_back();
-}
-
-
 void Commands::do_callsub(NeReLaBasic& vm) {
     std::string proc_name = to_upper(read_string(vm));
 
-    if (!vm.function_table.count(proc_name)) {
+    if (!vm.active_function_table->count(proc_name)) {
         Error::set(22, vm.runtime_current_line); return;
     }
-    const auto& proc_info = vm.function_table.at(proc_name);
+    const auto& proc_info = vm.active_function_table->at(proc_name);
     std::vector<BasicValue> args;
 
     Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
@@ -618,13 +616,37 @@ void Commands::do_callsub(NeReLaBasic& vm) {
     }
     else {
         NeReLaBasic::StackFrame frame;
+        frame.return_p_code_ptr = vm.active_p_code;
+        frame.return_pcode = vm.pcode;
+        frame.previous_function_table_ptr = vm.active_function_table;
         for (size_t i = 0; i < proc_info.parameter_names.size(); ++i) {
             if (i < args.size()) frame.local_variables[proc_info.parameter_names[i]] = args[i];
         }
-        frame.return_pcode = vm.pcode;
         vm.call_stack.push_back(frame);
+
+        if (!proc_info.module_name.empty() && vm.compiled_modules.count(proc_info.module_name)) {
+            auto& target_module = vm.compiled_modules[proc_info.module_name];
+            vm.active_p_code = &target_module.p_code;
+            vm.active_function_table = &target_module.function_table;
+        }
         vm.pcode = proc_info.start_pcode;
     }
+}
+
+// At runtime, ENDSUB handles returning from a procedure call.
+// It pops the call stack and restores the program counter.
+void Commands::do_endsub(NeReLaBasic& vm) {
+    if (vm.call_stack.empty()) {
+        Error::set(9, vm.runtime_current_line); // RETURN without GOSUB/CALL
+        return;
+    }
+    // For a procedure, there is no return value to set.
+    // We just pop the stack and set pcode to the return address.
+    auto& frame = vm.call_stack.back();
+    vm.active_p_code = frame.return_p_code_ptr; // Restore context
+    vm.pcode = frame.return_pcode;              // Restore PC
+    vm.active_function_table = frame.previous_function_table_ptr;
+    vm.call_stack.pop_back();
 }
 
 void Commands::do_list(NeReLaBasic& vm) {
@@ -674,8 +696,9 @@ void Commands::do_save(NeReLaBasic& vm) {
 }
 
 void Commands::do_compile(NeReLaBasic& vm) {
+    // Compile into the main program buffer
     TextIO::print("Compiling...\n");
-    if (vm.tokenize_program(vm.program_p_code) == 0) {
+    if (vm.tokenize_program(vm.program_p_code, vm.source_code) == 0) {
         TextIO::print("OK. Program compiled to " + std::to_string(vm.program_p_code.size()) + " bytes.\n");
     }
     else {
@@ -685,17 +708,17 @@ void Commands::do_compile(NeReLaBasic& vm) {
 }
 
 void Commands::do_run(NeReLaBasic& vm) {
-    // Compile into the main program buffer
-    if (vm.tokenize_program(vm.program_p_code) != 0) {
-        TextIO::print("Compilation failed. Cannot run.\n");
-        return;
-    }
+
+    do_compile(vm);
 
     // Clear variables and prepare for a clean run
     vm.variables.clear();
     vm.arrays.clear();
     vm.call_stack.clear();
     vm.for_stack.clear();
+    Error::clear();
+
+    vm.active_function_table = &vm.main_function_table;
 
     TextIO::print("Running...\n");
     // Execute from the main program buffer
@@ -705,6 +728,7 @@ void Commands::do_run(NeReLaBasic& vm) {
     if (Error::get() != 0) {
         Error::print();
     }
+    vm.active_function_table = &vm.main_function_table;
 }
 
 void Commands::do_tron(NeReLaBasic& vm) {

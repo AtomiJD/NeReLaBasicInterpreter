@@ -2,7 +2,7 @@
 
 ' Import the MATH module. The interpreter will look for "MATH.bas"
 ' and compile it before running this program.
-import MATH;
+import MATH
 
 print "--- Module Test Program ---"
 print
@@ -20,8 +20,8 @@ print "Result:"; y
 print
 
 ' Call the exported 'print_sum' procedure
-print "Calling MATH.PRINT_SUM(100, 23)..."
-MATH.PRINT_SUM(100, 23)
+print "Calling MATH.PRINT_SUM 100, 23..."
+MATH.PRINT_SUM 100, 23
 print
 
 print "--- Module Test Complete ---"

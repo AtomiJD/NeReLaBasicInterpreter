@@ -1,7 +1,5 @@
 Print "For Next Test"
 
-goto funci
-
 for i = 1 to 5
  print "lall: "; i
 next i

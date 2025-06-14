@@ -8,10 +8,45 @@
 #include "Error.hpp"
 #include "StringUtils.hpp"
 #include <iostream>
+#include <fstream>   // For std::ifstream
 #include <string>
 #include <stdexcept>
 #include <cstring>
 #include <conio.h>
+#include <algorithm> // for std::transform, std::find_if
+#include <cctype>    // for std::isspace, std::toupper
+
+void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
+
+namespace StringUtils {
+    // Left trim
+    static inline void ltrim(std::string& s) {
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+            }));
+    }
+
+    // Right trim
+    static inline void rtrim(std::string& s) {
+        s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+            }).base(), s.end());
+    }
+
+    // Trim from both ends
+    void trim(std::string& s) {
+        ltrim(s);
+        rtrim(s);
+    }
+
+    // to_upper
+    std::string to_upper(std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return std::toupper(c); });
+        return s;
+    }
+} // namespace StringUtils
+
 
 // Helper function to convert a string from the BASIC source to a number.
 // Supports decimal, hexadecimal ('$'), and binary ('%').
@@ -32,12 +67,23 @@ uint16_t stringToWord(const std::string& s) {
     }
 }
 
+void trim(std::string& s) {
+    size_t start = s.find_first_not_of(" \t\n\r");
+    size_t end = s.find_last_not_of(" \t\n\r");
+
+    if (start == std::string::npos)
+        s.clear();  
+    else
+        s = s.substr(start, end - start + 1);
+}
+
 // Constructor: Initializes the interpreter state
 NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memory
     buffer.reserve(64);
     lineinput.reserve(160);
     filename.reserve(40);
-    register_builtin_functions(*this);
+    active_function_table = &main_function_table;
+    register_builtin_functions(*this, *active_function_table);
 }
 
 void NeReLaBasic::init_screen() {
@@ -83,7 +129,8 @@ void NeReLaBasic::start() {
         if (!std::getline(std::cin, inputLine) || inputLine.empty()) continue;
 
         // Tokenize the direct-mode line, passing '0' as the line number
-        if (tokenize(inputLine, 0, direct_p_code) != 0) {
+        active_function_table = &main_function_table;
+        if (tokenize(inputLine, 0, direct_p_code, *active_function_table) != 0) {
             Error::print();
             continue;
         }
@@ -149,8 +196,24 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     // Handle Identifiers (Variables, Keywords, Functions)
     if (StringUtils::isletter(currentChar)) {
         size_t ident_start_pos = prgptr;
-        while (prgptr < lineinput.length() && (lineinput[prgptr] == '_' || StringUtils::isletter(lineinput[prgptr]) || StringUtils::isdigit(lineinput[prgptr]))) {
-            prgptr++;
+        // Loop to capture the entire qualified name (e.g., "MATH.ADD" or "X")
+        while (prgptr < lineinput.length()) {
+            // Capture the current part of the identifier (e.g., "MATH" or "ADD")
+            size_t part_start = prgptr;
+            while (prgptr < lineinput.length() && (StringUtils::isletter(lineinput[prgptr]) || StringUtils::isdigit(lineinput[prgptr]) || lineinput[prgptr] == '_')) {
+                prgptr++;
+            }
+            // If the part is empty, it's an error (e.g. "MODULE..FUNC") but we let it pass for now
+            if (prgptr == part_start) break;
+
+            // If we see a dot, loop again for the next part
+            if (prgptr < lineinput.length() && lineinput[prgptr] == '.') {
+                prgptr++;
+            }
+            else {
+                // No more dots, so the full identifier is complete
+                break;
+            }
         }
         buffer = lineinput.substr(ident_start_pos, prgptr - ident_start_pos);
         buffer = to_upper(buffer);
@@ -165,7 +228,7 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             return keywordToken;
         }
         if (is_start_of_statement) {
-            if (vm.function_table.count(buffer) && vm.function_table.at(buffer).is_procedure) {
+            if (vm.active_function_table->count(buffer) && vm.active_function_table->at(buffer).is_procedure) {
                 return Tokens::ID::CALLSUB; // It's a command-style procedure call!
             }
         }
@@ -238,7 +301,7 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     return Tokens::ID::NOCMD;
 }
 
-uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code) {
+uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, FunctionTable& compilation_func_table) {
     lineinput = line;
     prgptr = 0;
 
@@ -250,7 +313,15 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
     // Single loop to process all tokens on the line.
     while (prgptr < lineinput.length()) {
+
+        bool is_exported = false;
         Tokens::ID token = parse(*this, is_start_of_statement);
+
+        if (token == Tokens::ID::EXPORT) {
+            is_exported = true;
+            // It was an export, so get the *next* token (e.g., FUNC)
+            token = parse(*this, false);
+        }
 
         if (Error::get() != 0) return Error::get();
         if (token == Tokens::ID::NOCMD) break; // End of line reached.
@@ -262,6 +333,12 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
         // Use a switch for special compile-time tokens.
         switch (token) {
+            // --- Ignore IMPORT and MODULE keywords during this phase ---
+        case Tokens::ID::IMPORT:
+        case Tokens::ID::MODULE:
+            prgptr = lineinput.length(); // Skip the rest of the line
+            continue;
+
             // Keywords that are ignored at compile-time (they are just markers).
         case Tokens::ID::THEN:
         case Tokens::ID::TO:
@@ -283,6 +360,8 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             parse(*this, is_start_of_statement); // Parse the next token, which is the function name.
             FunctionInfo info;
             info.name = to_upper(buffer);
+            info.is_exported = is_exported;
+            info.module_name = this->current_module_name;
 
             // Find parentheses to get parameter string
             size_t open_paren = line.find('(', prgptr);
@@ -306,7 +385,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
             info.arity = info.parameter_names.size();
             info.start_pcode = out_p_code.size() + 3; // +3 for FUNC token and 2-byte address
-            function_table[info.name] = info;
+            compilation_func_table[info.name] = info;
 
             out_p_code.push_back(static_cast<uint8_t>(token));
             func_stack.push_back(out_p_code.size()); // Store address of the placeholder
@@ -334,6 +413,8 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             FunctionInfo info;
             info.name = to_upper(buffer);
             info.is_procedure = true;
+            info.is_exported = is_exported; // Set the exported status!
+            info.module_name = this->current_module_name;
 
             // --- Use stringstream for robust parameter parsing ---
             // Find the rest of the line after the procedure name.
@@ -359,7 +440,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
             info.arity = info.parameter_names.size();
             info.start_pcode = out_p_code.size() + 3; // +3 for SUB token and 2-byte address
-            function_table[info.name] = info;
+            compilation_func_table[info.name] = info;
 
             // Write the SUB token and its placeholder jump address
             out_p_code.push_back(static_cast<uint8_t>(token));
@@ -501,35 +582,146 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
     return 0; // Success
 }
 
-uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code) {
-    out_p_code.clear(); // Start with empty bytecode
+// --- HELPER FUNCTION TO COMPILE A MODULE FROM SOURCE ---
+bool NeReLaBasic::compile_module(const std::string& module_name, const std::string& module_source_code) {
+    if (this->compiled_modules.count(module_name)) {
+        return true; // Already compiled
+    }
+
+    TextIO::print("Compiling dependent module: " + module_name + "\n");
+
+    // --- NEW: No temporary compiler instance. ---
+    // We compile the module using our own instance's state, but direct the output
+    // into the module's own data structures within the `compiled_modules` map.
+
+    // 1. Create the entry for the new module to hold its data.
+    this->compiled_modules[module_name] = BasicModule{ module_name };
+
+    // 2. Tokenize the module's source, telling the function where to put the results.
+    // We pass the module's own p_code vector and function_table by reference.
+    if (this->tokenize_program(this->compiled_modules[module_name].p_code, module_source_code) != 0) {
+        Error::set(1, 0); // General compilation error
+        return false;
+    }
+    else {
+        TextIO::print("OK. Modul compiled to " + std::to_string(this->compiled_modules[module_name].p_code.size()) + " bytes.\n");
+    }
+
+    return true;
+}
+
+uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source) {
+    // 1. Reset compiler state
+    out_p_code.clear();
     if_stack.clear();
     func_stack.clear();
     label_addresses.clear();
-    current_source_line = 1;
+    // We no longer clear the main function table here.
 
-    std::stringstream source_stream(source_code);
-    std::string current_line;
-
-    while (std::getline(source_stream, current_line)) {
-        // Handle potential '\r' at the end of lines
-        if (!current_line.empty() && current_line.back() == '\r') {
-            current_line.pop_back();
+    // 2. Pre-scan to find imports and determine if we are a module
+    is_compiling_module = false;
+    current_module_name = "";
+    std::vector<std::string> modules_to_import;
+    std::stringstream pre_scan_stream(source);
+    std::string line;
+    while (std::getline(pre_scan_stream, line)) {
+        StringUtils::trim(line);
+        std::string line_upper = StringUtils::to_upper(line);
+        if (line_upper.rfind("EXPORT MODULE", 0) == 0) {
+            is_compiling_module = true;
+            std::string temp = line_upper.substr(1);
+            StringUtils::trim(temp);
+            if (!temp.empty()) temp.pop_back();
+            current_module_name = temp;
         }
-
-        if (tokenize(current_line, current_source_line, out_p_code) != 0) {
-            Error::print();
-            return 1; // Tokenization failed
+        else if (line_upper.rfind("IMPORT", 0) == 0) {
+            std::string temp = line_upper.substr(6);
+            StringUtils::trim(temp);
+            if (!temp.empty()) temp.pop_back();
+            modules_to_import.push_back(temp);
         }
-        current_source_line++;
     }
 
-    // Add final end-of-program marker
-    out_p_code.push_back(0);
-    out_p_code.push_back(0);
+    // 3. Get a pointer to the correct FunctionTable to populate.
+    FunctionTable* target_func_table = nullptr;
+    if (is_compiling_module) {
+        // If we are a module, our target is our own table inside the modules map.
+        target_func_table = &this->compiled_modules[current_module_name].function_table;
+    }
+    else {
+        // If we are the main program, our target is the main function table.
+        target_func_table = &this->main_function_table;
+    }
+
+    // 4. Clear and prepare the target table for compilation.
+    target_func_table->clear();
+    register_builtin_functions(*this, *target_func_table);
+
+    FunctionTable* previous_active_table = this->active_function_table;
+    this->active_function_table = target_func_table;
+
+    // 5. Compile dependencies (must be done AFTER setting our active table)
+    if (!is_compiling_module) {
+        for (const auto& mod_name : modules_to_import) {
+            if (compiled_modules.count(mod_name)) continue;
+            std::string filename = mod_name + ".bas";
+            std::ifstream mod_file(filename);
+            if (!mod_file) { Error::set(6, 0); TextIO::print("? Error: Module file not found: " + filename + "\n"); return 1; }
+            std::stringstream buffer;
+            buffer << mod_file.rdbuf();
+            if (!compile_module(mod_name, buffer.str())) {
+                TextIO::print("? Error: Failed to compile module: " + mod_name + "\n");
+                return 1;
+            }
+        }
+        is_compiling_module = false;
+    }
+
+    // 6. LINK FIRST, if this is the main program
+    if (!is_compiling_module) {
+        for (const auto& mod_name : modules_to_import) {
+            if (!compiled_modules.count(mod_name)) continue;
+            const BasicModule& mod = compiled_modules.at(mod_name);
+            for (const auto& pair : mod.function_table) {
+                if (pair.second.is_exported) {
+                    std::string mangled_name = mod_name + "." + pair.first;
+                    this->main_function_table[mangled_name] = pair.second;
+                }
+            }
+        }
+    }
+    // 7. Main compilation loop
+    std::stringstream source_stream(source);
+    current_source_line = 1;
+    while (std::getline(source_stream, line)) {
+        //TextIO::print("C(" + std::to_string(current_source_line) + "): " + line + "\n");
+        if (tokenize(line, current_source_line++, out_p_code, *target_func_table) != 0) {
+            this->active_function_table = nullptr; // Reset on error
+            return 1;
+        }
+    }
+
+    // 8. Finalize p_code and linking
+    out_p_code.push_back(0); out_p_code.push_back(0);
     out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NOCMD));
 
-    return 0; // Success
+    if (!is_compiling_module) {
+        // If we just compiled the main program, link the imported functions.
+        for (const auto& mod_name : modules_to_import) {
+            if (!compiled_modules.count(mod_name)) continue;
+
+            const BasicModule& mod = compiled_modules.at(mod_name);
+            for (const auto& pair : mod.function_table) {
+                if (pair.second.is_exported) {
+                    std::string mangled_name = mod_name + "." + pair.first;
+                    this->main_function_table[mangled_name] = pair.second;
+                }
+            }
+        }
+    }
+
+    this->active_function_table = previous_active_table;
+    return 0;
 }
 
 BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
@@ -537,20 +729,34 @@ BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info
         return func_info.native_impl(*this, args);
     }
 
-    // --- FINAL, ROBUST NESTED EXECUTION LOGIC ---
     size_t initial_stack_depth = call_stack.size();
 
+    // 1. Set up the new stack frame
     NeReLaBasic::StackFrame frame;
+    frame.return_p_code_ptr = this->active_p_code;
+    frame.return_pcode = this->pcode;
+    frame.previous_function_table_ptr = this->active_function_table;
+
     for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
         if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
     }
-    frame.return_pcode = pcode;
     call_stack.push_back(frame);
-    pcode = func_info.start_pcode;
 
+    // 2. --- CONTEXT SWITCH ---
+    if (!func_info.module_name.empty() && compiled_modules.count(func_info.module_name)) {
+        this->active_p_code = &this->compiled_modules.at(func_info.module_name).p_code;
+        this->active_function_table = &this->compiled_modules.at(func_info.module_name).function_table;
+    }
+    // 3. Set the program counter to the function's start address IN THE NEW CONTEXT
+    this->pcode = func_info.start_pcode;
+
+    // 4. Execute statements until the function returns
+    this->pcode = func_info.start_pcode;
     while (call_stack.size() > initial_stack_depth) {
         if (Error::get() != 0) {
+            // Unwind stack on error to prevent infinite loops
             while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
+            this->active_function_table = frame.previous_function_table_ptr; // Restore context
             return false;
         }
         if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
@@ -621,43 +827,45 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
     active_p_code = prev_active_p_code;
 }
 
-void NeReLaBasic::run_program() {
-
-    if (!if_stack.empty()) {
-        // There are unclosed IF blocks. Get the line number of the last one.
-        uint16_t error_line = if_stack.back().source_line;
-        Error::set(4, error_line); // New Error: Missing ENDIF
-        return; // Stop before running faulty code
-    }
-
-    // Setup for execution
-    variables.clear();
-    arrays.clear();
-    call_stack.clear();
-    for_stack.clear();
-    Error::clear();
-    pcode = 0; // Set program counter to the start of the bytecode
-
-    TextIO::print("Running...\n");
-    // Main execution loop
-    while (pcode < program_p_code.size()) {
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) break;
-
-        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
-        pcode += 2;
-
-        while (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
-            statement();
-            if (Error::get() != 0) break;
-        }
-
-        if (Error::get() != 0) {
-            Error::print();
-            break;
-        }
-        pcode++; // Consume the C_CR
-    }
-}
+//void NeReLaBasic::run_program() {
+//
+//    if (!if_stack.empty()) {
+//        // There are unclosed IF blocks. Get the line number of the last one.
+//        uint16_t error_line = if_stack.back().source_line;
+//        Error::set(4, error_line); // New Error: Missing ENDIF
+//        return; // Stop before running faulty code
+//    }
+//
+//    // Setup for execution
+//    variables.clear();
+//    arrays.clear();
+//    call_stack.clear();
+//    for_stack.clear();
+//    Error::clear();
+//    pcode = 0; // Set program counter to the start of the bytecode
+//
+//    this->active_function_table = &this->main_function_table;
+//
+//    TextIO::print("Running...\n");
+//    // Main execution loop
+//    while (pcode < program_p_code.size()) {
+//        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) break;
+//
+//        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+//        pcode += 2;
+//
+//        while (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
+//            statement();
+//            if (Error::get() != 0) break;
+//        }
+//
+//        if (Error::get() != 0) {
+//            Error::print();
+//            break;
+//        }
+//        pcode++; // Consume the C_CR
+//    }
+//}
 
 void NeReLaBasic::statement() {
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]); // Peek at the token
@@ -915,19 +1123,19 @@ BasicValue NeReLaBasic::parse_primary() {
         std::string real_func_to_call = identifier_being_called;
 
         // Check for higher-order function calls
-        if (!function_table.count(real_func_to_call)) {
+        if (!active_function_table->count(real_func_to_call)) {
             BasicValue& var = get_variable(*this, identifier_being_called);
             if (std::holds_alternative<FunctionRef>(var)) {
                 real_func_to_call = std::get<FunctionRef>(var).name;
             }
         }
 
-        if (!function_table.count(real_func_to_call)) {
+        if (!active_function_table->count(real_func_to_call)) {
             Error::set(22, runtime_current_line);
             return false;
         }
 
-        const auto& func_info = function_table.at(real_func_to_call);
+        const auto& func_info = active_function_table->at(real_func_to_call);
         std::vector<BasicValue> args;
 
         // Argument Parsing Logic (This is now correct)
