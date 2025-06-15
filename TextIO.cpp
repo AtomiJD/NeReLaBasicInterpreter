@@ -29,7 +29,5 @@ void TextIO::clearScreen() {
 }
 
 void TextIO::setColor(uint8_t foreground, uint8_t background) {
-    // We can implement actual color later using the Windows Console API
-    // For now, we'll just print a notification.
-    std::cout << "[Color set to FG:" << (int)foreground << ", BG:" << (int)background << "]\n";
+    std::cout << "\x1B[" + std::to_string(foreground) + ";" + std::to_string(background) + "m";
 }

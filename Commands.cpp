@@ -79,13 +79,25 @@ std::string to_string(const BasicValue& val) {
             if (s.back() == '.') { s.pop_back(); }
             return s;
         }
+        else if constexpr (std::is_same_v<T, int>) {
+            std::string s = std::to_string(arg);
+            return s;
+        }
         else if constexpr (std::is_same_v<T, std::string>) {
             return arg;
         }
         else if constexpr (std::is_same_v<T, FunctionRef>) {
-            // --- THIS IS THE NEW, MISSING LOGIC ---
             // Return a descriptive string for the function reference.
             return "<Function: " + arg.name + ">";
+        }
+        else if constexpr (std::is_same_v<T, DateTime>) {
+            // Logic to convert DateTime to a string
+            auto tp = arg.time_point;
+            auto in_time_t = std::chrono::system_clock::to_time_t(tp);
+            std::stringstream ss;
+#pragma warning(suppress : 4996)
+            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+            return ss.str();
         }
         }, val);
 }
@@ -113,33 +125,144 @@ void print_value(const BasicValue& val) {
             }
             TextIO::print(s);
         }
+        else if constexpr (std::is_same_v<T, int>) {
+            // Convert int to string for printing
+            std::string s = std::to_string(arg);
+            TextIO::print(s);
+        }
+        else if constexpr (std::is_same_v<T, DateTime>) {
+            // Logic to print DateTime
+            auto tp = arg.time_point;
+            auto in_time_t = std::chrono::system_clock::to_time_t(tp);
+            std::stringstream ss;
+#pragma warning(suppress : 4996)
+            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+            TextIO::print(ss.str());
+        }
         else if constexpr (std::is_same_v<T, std::string>) { 
             TextIO::print(arg);
         }
         }, val);
 }
 
+void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& name) {
+    const int bytes_per_line = 16;
+    TextIO::print("Dumping p_code for '" + name + "' (" + std::to_string(p_code_to_dump.size()) + " bytes):\n");
+
+    for (size_t i = 0; i < p_code_to_dump.size(); i += bytes_per_line) {
+        // Print Address
+        std::stringstream ss_addr;
+        ss_addr << "0x" << std::setw(4) << std::setfill('0') << std::hex << i;
+        TextIO::print(ss_addr.str() + " : ");
+
+        // Print Hex Bytes
+        std::stringstream ss_hex;
+        for (int j = 0; j < bytes_per_line; ++j) {
+            if (i + j < p_code_to_dump.size()) {
+                ss_hex << std::setw(2) << std::setfill('0') << std::hex
+                    << static_cast<int>(p_code_to_dump[i + j]) << " ";
+            }
+            else {
+                ss_hex << "   ";
+            }
+        }
+        TextIO::print(ss_hex.str() + " : ");
+
+        // Print ASCII characters
+        std::stringstream ss_ascii;
+        for (int j = 0; j < bytes_per_line; ++j) {
+            if (i + j < p_code_to_dump.size()) {
+                char c = p_code_to_dump[i + j];
+                if (isprint(static_cast<unsigned char>(c))) {
+                    ss_ascii << c;
+                }
+                else {
+                    ss_ascii << '.';
+                }
+            }
+        }
+        TextIO::print(ss_ascii.str());
+        TextIO::nl();
+    }
+}
+
+
 void Commands::do_dim(NeReLaBasic& vm) {
-    Tokens::ID array_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-    std::string array_name = to_upper(read_string(vm));
+    Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+    std::string var_name = to_upper(read_string(vm));
 
     //// Expect an opening bracket '['
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTBRACKET) {
-        Error::set(1, vm.runtime_current_line); return;
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    
+    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+        BasicValue size_val = vm.evaluate_expression();
+        if (Error::get() != 0) return;
+        int size = static_cast<int>(to_double(size_val));
+
+        // Expect a closing bracket ']'
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+            Error::set(1, vm.runtime_current_line); return;
+        }
+
+        bool is_string_array = (var_name.back() == '$');
+        BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
+        vm.arrays[var_name] = std::vector<BasicValue>(size + 1, default_val);
     }
+    else 
+    {
+        // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
+        // We expect the 'AS' keyword here.
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
+            Error::set(1, vm.runtime_current_line); // Syntax Error: Expected AS
+            return;
+        }
 
-    BasicValue size_val = vm.evaluate_expression();
-    if (Error::get() != 0) return;
-    int size = static_cast<int>(to_double(size_val));
+        // The next part is the type name (e.g., INTEGER, DATE). The tokenizer
+        // will have parsed this as a generic identifier (VARIANT or INT).
+        Tokens::ID type_name_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+        if (type_name_token != Tokens::ID::VARIANT && type_name_token != Tokens::ID::INT) {
+            Error::set(1, vm.runtime_current_line); // Syntax Error: Expected a type name
+            return;
+        }
 
-    // Expect a closing bracket ']'
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-        Error::set(1, vm.runtime_current_line); return;
+        std::string type_name = to_upper(read_string(vm));
+        DataType declared_type;
+
+        // Map the type name string to our DataType enum.
+        if (type_name == "INTEGER" ) {
+            declared_type = DataType::INTEGER;
+        } else if (type_name == "DOUBLE") {
+            declared_type = DataType::DOUBLE;
+        }
+        else if (type_name == "STRING") {
+            declared_type = DataType::STRING;
+        }
+        else if (type_name == "DATE") {
+            declared_type = DataType::DATETIME;
+        }
+        else if (type_name == "BOOLEAN" || type_name == "BOOL") {
+            declared_type = DataType::BOOL;
+        }
+        else {
+            Error::set(1, vm.runtime_current_line); // Syntax Error: Unknown type
+            return;
+        }
+
+        // Store the type information for this variable in the VM.
+        vm.variable_types[var_name] = declared_type;
+
+        // Initialize the variable with a default value appropriate for its type.
+        BasicValue default_value;
+        switch (declared_type) {
+        case DataType::INTEGER:  default_value = 0; break;
+        case DataType::DOUBLE:   default_value = 0.0; break;
+        case DataType::STRING:   default_value = std::string(""); break;
+        case DataType::BOOL:     default_value = false; break;
+        case DataType::DATETIME: default_value = DateTime{}; break;
+        default:                 default_value = 0.0; break;
+        }
+        set_variable(vm, var_name, default_value);
     }
-
-    bool is_string_array = (array_name.back() == '$');
-    BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
-    vm.arrays[array_name] = std::vector<BasicValue>(size + 1, default_val);
 }
 
 void Commands::do_input(NeReLaBasic& vm) {
@@ -331,6 +454,40 @@ void Commands::do_let(NeReLaBasic& vm) {
         else {
             // It's a normal variable assignment, e.g., a = 5
             BasicValue value_to_assign = vm.evaluate_expression();
+
+            // --- Type Checking Logic ---
+            if (vm.variable_types.count(name)) {
+                DataType expected_type = vm.variable_types.at(name);
+                bool type_ok = false;
+                switch (expected_type) {
+                case DataType::INTEGER:
+                    // Allow assigning numbers or booleans to a int variable.
+                    if (std::holds_alternative<double>(value_to_assign) || std::holds_alternative<int>(value_to_assign) || std::holds_alternative<bool>(value_to_assign)) type_ok = true;
+                    break;
+                case DataType::DOUBLE:
+                    // Allow assigning numbers or booleans to a double variable.
+                    if (std::holds_alternative<double>(value_to_assign) || std::holds_alternative<bool>(value_to_assign)) type_ok = true;
+                    break;
+                case DataType::STRING:
+                    if (std::holds_alternative<std::string>(value_to_assign)) type_ok = true;
+                    break;
+                case DataType::BOOL:
+                    // Allow assigning booleans or numbers to a boolean variable.
+                    if (std::holds_alternative<bool>(value_to_assign) || std::holds_alternative<double>(value_to_assign)) type_ok = true;
+                    break;
+                case DataType::DATETIME:
+                    if (std::holds_alternative<DateTime>(value_to_assign)) type_ok = true;
+                    break;
+                case DataType::DEFAULT:
+                    type_ok = true; // No type was declared, so no checking needed.
+                    break;
+                }
+                if (!type_ok) {
+                    Error::set(15, vm.runtime_current_line); // Type Mismatch error
+                    return;
+                }
+            }
+
             if (Error::get() != 0) return;
             set_variable(vm, name, value_to_assign);
         }
@@ -522,6 +679,14 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
     }
     else {
         NeReLaBasic::StackFrame frame;
+        // It's a user-defined BASIC function. Set up the stack frame.
+        for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
+            if (i < args.size()) {
+                frame.local_variables[func_info.parameter_names[i]] = args[i];
+            }
+        }
+
+
         frame.return_p_code_ptr = vm.active_p_code;
         frame.return_pcode = vm.pcode;
         // NEW: Save the entire function table of the caller
@@ -742,42 +907,28 @@ void Commands::do_troff(NeReLaBasic& vm) {
 }
 
 void Commands::do_dump(NeReLaBasic& vm) {
-    const int bytes_per_line = 16;
-    TextIO::print("Dumping p_code vector (" + std::to_string(vm.program_p_code.size()) + " bytes):\n");
+    // Peek at the next token to see if an argument was provided
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-    for (size_t i = 0; i < vm.program_p_code.size(); i += bytes_per_line) {
-        // Print Address
-        std::stringstream ss_addr;
-        ss_addr << "0x" << std::setw(4) << std::setfill('0') << std::hex << i;
-        TextIO::print(ss_addr.str() + " : ");
-
-        // Print Hex Bytes
-        std::stringstream ss_hex;
-        for (int j = 0; j < bytes_per_line; ++j) {
-            if (i + j < vm.program_p_code.size()) {
-                ss_hex << std::setw(2) << std::setfill('0') << std::hex
-                    << static_cast<int>(vm.program_p_code[i + j]) << " ";
-            }
-            else {
-                ss_hex << "   ";
-            }
+    if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR) {
+        // Case 1: No argument provided, dump the main program p-code
+        dump_p_code(vm.program_p_code, "main program");
+    }
+    else {
+        // Case 2: An argument was provided, assume it's the module name
+        BasicValue module_name_val = vm.evaluate_expression();
+        if (Error::get() != 0) {
+            return; // An error occurred evaluating the expression
         }
-        TextIO::print(ss_hex.str() + " : ");
 
-        // Print ASCII characters
-        std::stringstream ss_ascii;
-        for (int j = 0; j < bytes_per_line; ++j) {
-            if (i + j < vm.program_p_code.size()) {
-                char c = vm.program_p_code[i + j];
-                if (isprint(static_cast<unsigned char>(c))) {
-                    ss_ascii << c;
-                }
-                else {
-                    ss_ascii << '.';
-                }
-            }
+        std::string module_name = to_upper(to_string(module_name_val));
+
+        if (vm.compiled_modules.count(module_name)) {
+            // Module found, dump its p_code
+            dump_p_code(vm.compiled_modules.at(module_name).p_code, module_name);
         }
-        TextIO::print(ss_ascii.str());
-        TextIO::nl();
+        else {
+            TextIO::print("? Error: Module '" + module_name + "' not found or not compiled.\n");
+        }
     }
 }

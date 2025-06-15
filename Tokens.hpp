@@ -78,11 +78,6 @@ namespace Tokens {
         FLUPP = 0x4C,
         INPUT = 0x4D, // continue with 0xBA!
         GET = 0xBA,
-        COLOR = 0xBC,
-        LOCATE = 0xBD,
-        SETCHR = 0xBE,
-        RND = 0xC6,
-        JOY = 0xC8, // c7 is L_CALLFUNC
         WAIT = 0xD1,
         BLOAD = 0xD2,
         BSAVE = 0xD4,

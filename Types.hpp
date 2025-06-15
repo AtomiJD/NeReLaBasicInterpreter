@@ -1,6 +1,30 @@
 #pragma once
 #include <variant>
 #include <string>
+#include <chrono>
+
+// An enum to represent the declared type of a variable.
+enum class DataType {
+    DEFAULT, // Original behavior, can hold any type
+    BOOL,
+    INTEGER,
+    DOUBLE,
+    STRING,
+    DATETIME
+};
+
+// A struct to hold our date/time value, based on std::chrono.
+struct DateTime {
+    std::chrono::system_clock::time_point time_point;
+
+    // Default constructor initializes to the current time.
+    DateTime() : time_point(std::chrono::system_clock::now()) {}
+
+    // Constructor from a time_point.
+    DateTime(const std::chrono::system_clock::time_point& tp) : time_point(tp) {}
+
+    bool operator==(const DateTime&) const = default;
+};
 
 // This struct represents a "pointer" or "reference" to a function.
 // We just store the function's name.
@@ -12,7 +36,7 @@ struct FunctionRef {
 
 // BasicValue is a universal container for any value in our language.
 // It can hold either a boolean or a floating-point number.
-using BasicValue = std::variant<bool, double, std::string, FunctionRef>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime>;
 
 //==============================================================================
 // HELPER FUNCTIONS

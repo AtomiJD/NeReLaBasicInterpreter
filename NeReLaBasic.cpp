@@ -120,13 +120,17 @@ void NeReLaBasic::start() {
     init_basic();
 
     std::string inputLine;
+
     while (true) {
         Error::clear();
         direct_p_code.clear();
         linenr = 0;
         TextIO::print("Ready\n? ");
 
-        if (!std::getline(std::cin, inputLine) || inputLine.empty()) continue;
+        if (!std::getline(std::cin, inputLine) || inputLine.empty()) {
+            std::cin.clear();
+            continue;
+        }
 
         // Tokenize the direct-mode line, passing '0' as the line number
         active_function_table = &main_function_table;
@@ -533,7 +537,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             // Don't write the ENDIF token, it's a compile-time marker.
             continue;
         }
-        if (token == Tokens::ID::CALLFUNC) {
+        case Tokens::ID::CALLFUNC: {
             // The buffer holds the function name (e.g., "lall").
             // Write the CALLFUNC token, then write the function name string.
             out_p_code.push_back(static_cast<uint8_t>(token));
@@ -557,6 +561,12 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             // We have now processed the entire "next i" statement.
             // Continue to the next token on the line (if any).
             continue;
+
+        case Tokens::ID::AS:
+            // This is a keyword we need at runtime for DIM.
+            // Write the token to the bytecode stream.
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            continue; // Continue to the next token
         }
         default: {
             out_p_code.push_back(static_cast<uint8_t>(token));
@@ -629,15 +639,13 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const st
         std::string line_upper = StringUtils::to_upper(line);
         if (line_upper.rfind("EXPORT MODULE", 0) == 0) {
             is_compiling_module = true;
-            std::string temp = line_upper.substr(1);
+            std::string temp = line_upper.substr(13);
             StringUtils::trim(temp);
-            if (!temp.empty()) temp.pop_back();
             current_module_name = temp;
         }
         else if (line_upper.rfind("IMPORT", 0) == 0) {
             std::string temp = line_upper.substr(6);
             StringUtils::trim(temp);
-            if (!temp.empty()) temp.pop_back();
             modules_to_import.push_back(temp);
         }
     }
@@ -675,6 +683,7 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const st
             }
         }
         is_compiling_module = false;
+        current_module_name = "";
     }
 
     // 6. LINK FIRST, if this is the main program
@@ -1258,6 +1267,17 @@ BasicValue NeReLaBasic::parse_comparison() {
                 if (op == Tokens::ID::C_GT) return to_string(l) > to_string(r);
                 if (op == Tokens::ID::C_LE) return to_string(l) <= to_string(r);
                 if (op == Tokens::ID::C_GE) return to_string(l) >= to_string(r);
+            }
+            // Priority 2: If BOTH operands are DateTime, compare their internal time_points.
+            else if (std::holds_alternative<DateTime>(left) && std::holds_alternative<DateTime>(right)) {
+                const auto& dt_l = std::get<DateTime>(left);
+                const auto& dt_r = std::get<DateTime>(right);
+                if (op == Tokens::ID::C_EQ) return dt_l.time_point == dt_r.time_point;
+                if (op == Tokens::ID::C_NE) return dt_l.time_point != dt_r.time_point;
+                if (op == Tokens::ID::C_LT) return dt_l.time_point < dt_r.time_point;
+                if (op == Tokens::ID::C_GT) return dt_l.time_point > dt_r.time_point;
+                if (op == Tokens::ID::C_LE) return dt_l.time_point <= dt_r.time_point;
+                if (op == Tokens::ID::C_GE) return dt_l.time_point >= dt_r.time_point;
             }
             else {
                 // Otherwise, both are numeric (double or bool), so we compare them as numbers.

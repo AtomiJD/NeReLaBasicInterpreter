@@ -1,66 +1,21 @@
-Print "Functional tests"
-print
-Print "Function Definition and call functions"
+DIM deadline AS DATE
+DIM name AS STRING
 
-func lall(a,b)
-    return a*b
-endfunc
+DIM intA As INTEGER
 
-print "func call:"
-b=lall(5,3)
-print b
+name = "Project Apollo"
+deadline = NOW()
 
-print
-print "Done"
-print "------------------------"
+PRINT "Deadline for "; name; " is "; deadline
 
+deadline = DATEADD("D", 10, deadline)
+PRINT "Extended deadline is "; deadline
 
-print "Using higher order functions"
-print
+If deadline > Now() then
+   print "Deadline is greater"
+endif
 
-func inc(ab)
-    return ab+1
-endfunc
-func dec(ac)
-    return ac-1
-endfunc
+PRINT "Current system date is "; DATE$()
 
-func apply(fa,cc)
-    return fa(cc)
-endfunc
-print apply(inc@,10)
-print apply(dec@,12)
-
-print
-print "Done"
-print "------------------------"
-
-print "Simple recursion"
-print
-
-func factorial(a)
-    if a > 1 then
-        return factorial(a-1)*a
-    else
-        return a
-    endif
-endfunc
-
-lall =  factorial(5)
-print "erg: ", lall
-
-print
-print "Done"
-print "------------------------"
-
-print "Simple recursion"
-print
-
-func printnumbers(n)
-    if n > 0 then
-        print n
-	r=printnumbers(n - 1)
-    endif
-endfunc
-
-r=printnumbers(5)  ' returns 5, 4, 3, 2, 1
+intA = 5
+print "A: "; intA

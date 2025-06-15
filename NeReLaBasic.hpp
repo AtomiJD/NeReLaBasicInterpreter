@@ -21,8 +21,8 @@ public:
     uint16_t linenr = 0;
 
     uint8_t graphmode = 0;
-    uint8_t fgcolor = 5;
-    uint8_t bgcolor = 0;
+    uint8_t fgcolor = 32;
+    uint8_t bgcolor = 40;
     uint8_t trace = 0;
     uint16_t runtime_current_line = 0;
     uint16_t current_source_line = 0;
@@ -96,6 +96,7 @@ public:
 
     // -- - Symbol Tables for Variables-- -
     std::unordered_map<std::string, BasicValue> variables;
+    std::unordered_map<std::string, DataType> variable_types;
     std::unordered_map<std::string, std::vector<BasicValue>> arrays;
 
     std::unordered_map<std::string, uint16_t> label_addresses;

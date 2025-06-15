@@ -12,6 +12,8 @@
 #include <filesystem>   
 #include <iostream>     
 #include <regex>
+#include <iomanip> 
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -238,7 +240,8 @@ BasicValue builtin_sqr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return (val < 0) ? 0.0 : std::sqrt(val); // Return 0 for negative input
 }
 
-// --- Time Functions ---
+// --- Date and Time Functions ---
+// 
 // TICK() -> returns milliseconds since the program started
 BasicValue builtin_tick(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // This function takes no arguments
@@ -256,6 +259,94 @@ BasicValue builtin_tick(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()
         );
 }
+// NOW() -> returns a DateTime object for the current moment
+BasicValue builtin_now(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+    return DateTime{}; // Creates a new DateTime object, which defaults to now
+}
+
+// DATE$() -> returns the current date as a string "YYYY-MM-DD"
+BasicValue builtin_date_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line);
+        return std::string("");
+    }
+    auto now = std::chrono::system_clock::now();
+    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+#pragma warning(suppress : 4996) // Suppress warning for std::localtime
+    ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d");
+    return ss.str();
+}
+
+// TIME$() -> returns the current time as a string "HH:MM:SS"
+BasicValue builtin_time_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line);
+        return std::string("");
+    }
+    auto now = std::chrono::system_clock::now();
+    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+#pragma warning(suppress : 4996) // Suppress warning for std::localtime
+    ss << std::put_time(std::localtime(&in_time_t), "%H:%M:%S");
+    return ss.str();
+}
+
+// Helper to safely add time units to a time_t
+time_t add_to_tm(time_t base_time, int years, int months, int days, int hours, int minutes, int seconds) {
+    struct tm timeinfo;
+    localtime_s(&timeinfo, &base_time); // Use safe version
+
+    timeinfo.tm_year += years;
+    timeinfo.tm_mon += months;
+    timeinfo.tm_mday += days;
+    timeinfo.tm_hour += hours;
+    timeinfo.tm_min += minutes;
+    timeinfo.tm_sec += seconds;
+
+    return mktime(&timeinfo); // mktime normalizes the date/time components
+}
+
+// DATEADD(part$, number, dateValue)
+BasicValue builtin_dateadd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+
+    std::string part = to_upper(to_string(args[0]));
+    int number = static_cast<int>(to_double(args[1]));
+
+    DateTime start_date;
+    if (std::holds_alternative<DateTime>(args[2])) {
+        start_date = std::get<DateTime>(args[2]);
+    }
+    else {
+        Error::set(15, vm.runtime_current_line); // Type mismatch for 3rd arg
+        return false;
+    }
+
+    time_t start_time_t = std::chrono::system_clock::to_time_t(start_date.time_point);
+    time_t new_time_t;
+
+    if (part == "YYYY") new_time_t = add_to_tm(start_time_t, number, 0, 0, 0, 0, 0);
+    else if (part == "M") new_time_t = add_to_tm(start_time_t, 0, number, 0, 0, 0, 0);
+    else if (part == "D") new_time_t = add_to_tm(start_time_t, 0, 0, number, 0, 0, 0);
+    else if (part == "H") new_time_t = add_to_tm(start_time_t, 0, 0, 0, number, 0, 0);
+    else if (part == "N") new_time_t = add_to_tm(start_time_t, 0, 0, 0, 0, number, 0);
+    else if (part == "S") new_time_t = add_to_tm(start_time_t, 0, 0, 0, 0, 0, number);
+    else {
+        Error::set(1, vm.runtime_current_line); // Invalid interval string
+        return false;
+    }
+
+    return DateTime{ std::chrono::system_clock::from_time_t(new_time_t) };
+}
+
 
 // --- Procedures ---
 BasicValue builtin_cls(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -361,6 +452,27 @@ BasicValue builtin_pwd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
+// --- GUI and Graphic and more ---
+// Handles: COLOR fg, bg
+BasicValue builtin_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false; // Procedures return a dummy value
+    }
+
+    // Convert arguments to integers
+    int fg = static_cast<int>(to_double(args[0]));
+    int bg = static_cast<int>(to_double(args[1]));
+
+    // Call the underlying TextIO function
+    TextIO::setColor(fg, bg);
+
+    return false; // Procedures must return something; the value is ignored.
+}
+
+// --- GRAPHICS PROCEDURES ---
+
+
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
     // Helper lambda to make registration cleaner
@@ -393,7 +505,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);
-
+    register_func("NOW", 0, builtin_now);
+    register_func("DATE$", 0, builtin_date_str);
+    register_func("TIME$", 0, builtin_time_str);
+    register_func("DATEADD", 3, builtin_dateadd);
 
     // --- Register Procedures ---
 
@@ -411,5 +526,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
     register_proc("CD", 1, builtin_cd);
     register_proc("PWD", 0, builtin_pwd);
+    register_proc("COLOR", 2, builtin_color);
+
 }
 
