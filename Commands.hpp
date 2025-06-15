@@ -33,6 +33,7 @@ namespace Commands {
     void do_tron(NeReLaBasic& vm);
     void do_troff(NeReLaBasic& vm);
     void do_dump(NeReLaBasic& vm);
+    void do_stop(NeReLaBasic& vm);
 }
 
 BasicValue& get_variable(NeReLaBasic& vm, const std::string& name);

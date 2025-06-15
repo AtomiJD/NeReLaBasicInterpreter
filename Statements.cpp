@@ -53,6 +53,8 @@ namespace {
         {"EXPORT",  Tokens::ID::EXPORT},
         {"IMPORT",  Tokens::ID::IMPORT},
         {"AS",  Tokens::ID::AS},
+        {"STOP",    Tokens::ID::STOP},    
+        {"RESUME",  Tokens::ID::RESUME},  
         // ... and so on for all your keywords.
     };
 } // end anonymous namespace

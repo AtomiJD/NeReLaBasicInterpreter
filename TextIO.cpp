@@ -29,5 +29,24 @@ void TextIO::clearScreen() {
 }
 
 void TextIO::setColor(uint8_t foreground, uint8_t background) {
-    std::cout << "\x1B[" + std::to_string(foreground) + ";" + std::to_string(background) + "m";
+    int fgs = 30;
+    int bgs = 40;
+    if (foreground > 7) fgs = 82;
+    if (background > 7) bgs = 92;
+    std::cout << "\x1B[" + std::to_string(foreground+fgs) + ";" + std::to_string(background+bgs) + "m";
+}
+
+void TextIO::locate(int row, int col) {
+    // Using standard ANSI escape codes to position the cursor.
+    // BASIC is typically 1-indexed, so we don't need to subtract 1.
+    std::cout << "\x1B[" << row << ";" << col << "H";
+}
+
+void TextIO::setCursor(bool on) {
+    if (on) {
+        std::cout << "\033[?25h"; // ANSI code to show cursor
+    }
+    else {
+        std::cout << "\033[?25l"; // ANSI code to hide cursor
+    }
 }

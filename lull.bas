@@ -1,21 +1,6 @@
-DIM deadline AS DATE
-DIM name AS STRING
-
-DIM intA As INTEGER
-
-name = "Project Apollo"
-deadline = NOW()
-
-PRINT "Deadline for "; name; " is "; deadline
-
-deadline = DATEADD("D", 10, deadline)
-PRINT "Extended deadline is "; deadline
-
-If deadline > Now() then
-   print "Deadline is greater"
-endif
-
-PRINT "Current system date is "; DATE$()
-
-intA = 5
-print "A: "; intA
+PRINT "WEITER"
+FOR i = 0 to 10
+	IF I = 5 THEN PRINT "LALL"; I
+	PRINT "LULL"; i
+NEXT I
+PRINT "ENDE"

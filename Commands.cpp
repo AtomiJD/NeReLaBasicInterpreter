@@ -20,6 +20,12 @@
 //    return (msb << 8) | lsb;
 //}
 
+std::string to_upper(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+        [](unsigned char c) { return std::toupper(c); });
+    return s;
+}
+
 // Helper to read a null-terminated string from p_code memory
 std::string read_string(NeReLaBasic& vm) {
     std::string s;
@@ -52,13 +58,29 @@ BasicValue& get_variable(NeReLaBasic& vm, const std::string& name) {
 // Sets a variable. If inside a function, it sets the variable in the
 // CURRENT function's local scope. Otherwise, it sets a global variable.
 void set_variable(NeReLaBasic& vm, const std::string& name, const BasicValue& value) {
-    // If we are in a function call, all assignments create/update local variables
-    // in the *current* stack frame.
+    // If we are inside a function/subroutine...
     if (!vm.call_stack.empty()) {
+        // First, check if a LOCAL variable with this name already exists in the current scope.
+        // This is important for loops or multiple assignments to the same local variable.
+        if (vm.call_stack.back().local_variables.count(name)) {
+            vm.call_stack.back().local_variables[name] = value;
+            return;
+        }
+
+        // Second, check if a GLOBAL variable with this name exists.
+        // If so, update the global one INSTEAD of creating a new local one.
+        if (vm.variables.count(name)) {
+            vm.variables[name] = value;
+            return;
+        }
+
+        // Finally, if it's not in the local scope and not in the global scope,
+        // it is a brand new variable, which we will define as local to the subroutine.
         vm.call_stack.back().local_variables[name] = value;
+
     }
     else {
-        // Otherwise, it's a global variable.
+        // Not in a subroutine, so it must be a global variable.
         vm.variables[name] = value;
     }
 }
@@ -100,12 +122,6 @@ std::string to_string(const BasicValue& val) {
             return ss.str();
         }
         }, val);
-}
-
-std::string to_upper(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-        [](unsigned char c) { return std::toupper(c); });
-    return s;
 }
 
 void print_value(const BasicValue& val) {
@@ -195,6 +211,7 @@ void Commands::do_dim(NeReLaBasic& vm) {
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     
     if (next_token == Tokens::ID::C_LEFTBRACKET) {
+        vm.pcode++; // Consume left bracket
         BasicValue size_val = vm.evaluate_expression();
         if (Error::get() != 0) return;
         int size = static_cast<int>(to_double(size_val));
@@ -330,7 +347,7 @@ void Commands::do_print(NeReLaBasic& vm) {
     while (true) {
         // Peek at the next token to decide what to do.
         Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-        if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR) {
+        if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR || next_token == Tokens::ID::C_COLON) {
             TextIO::nl(); return;
         }
 
@@ -347,7 +364,7 @@ void Commands::do_print(NeReLaBasic& vm) {
             vm.pcode++; // Consume the comma
             // Check if the line ends right after the comma
             Tokens::ID after_separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (after_separator == Tokens::ID::NOCMD || after_separator == Tokens::ID::C_CR) {
+            if (after_separator == Tokens::ID::NOCMD || after_separator == Tokens::ID::C_CR || next_token == Tokens::ID::C_COLON) {
                 return; // Ends with a comma, so no newline.
             }
             TextIO::print("\t"); // Otherwise, print a tab and continue the loop.
@@ -356,7 +373,7 @@ void Commands::do_print(NeReLaBasic& vm) {
             vm.pcode++; // Consume the semicolon
             // Check if the line ends right after the semicolon
             Tokens::ID after_separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (after_separator == Tokens::ID::NOCMD || after_separator == Tokens::ID::C_CR) {
+            if (after_separator == Tokens::ID::NOCMD || after_separator == Tokens::ID::C_CR || next_token == Tokens::ID::C_COLON) {
                 return; // Ends with a semicolon, so no newline.
             }
             // Otherwise, just continue the loop to the next item.
@@ -569,7 +586,7 @@ void Commands::do_for(NeReLaBasic& vm) {
     // The TO and STEP keywords were skipped by the tokenizer.
     // If we are NOT at the end of the line, what's left must be the step expression.
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-    if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::NOCMD)
+    if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::NOCMD && next_token != Tokens::ID::C_COLON)
     {
         BasicValue step_expr_val = vm.evaluate_expression();
         if (Error::get() != 0) return;
@@ -864,7 +881,14 @@ void Commands::do_compile(NeReLaBasic& vm) {
     // Compile into the main program buffer
     TextIO::print("Compiling...\n");
     if (vm.tokenize_program(vm.program_p_code, vm.source_code) == 0) {
-        TextIO::print("OK. Program compiled to " + std::to_string(vm.program_p_code.size()) + " bytes.\n");
+        if (!vm.if_stack.empty()) {
+            // There are unclosed IF blocks. Get the line number of the last one.
+            uint16_t error_line = vm.if_stack.back().source_line;
+            Error::set(4, error_line); // New Error: Missing ENDIF
+        }
+        else {
+            TextIO::print("OK. Program compiled to " + std::to_string(vm.program_p_code.size()) + " bytes.\n");
+        }
     }
     else {
         // Error message is printed by tokenize_program
@@ -872,9 +896,17 @@ void Commands::do_compile(NeReLaBasic& vm) {
     }
 }
 
+void Commands::do_stop(NeReLaBasic& vm) {
+    TextIO::print("\nBreak in line " + std::to_string(vm.runtime_current_line) + "\n");
+    vm.is_stopped = true;
+}
+
 void Commands::do_run(NeReLaBasic& vm) {
 
     do_compile(vm);
+    if (Error::get() != 0) {
+        Error::print();
+    }
 
     // Clear variables and prepare for a clean run
     vm.variables.clear();
@@ -882,6 +914,8 @@ void Commands::do_run(NeReLaBasic& vm) {
     vm.call_stack.clear();
     vm.for_stack.clear();
     Error::clear();
+    vm.is_stopped = false; // Reset the stopped state
+
 
     vm.active_function_table = &vm.main_function_table;
 
@@ -907,28 +941,57 @@ void Commands::do_troff(NeReLaBasic& vm) {
 }
 
 void Commands::do_dump(NeReLaBasic& vm) {
-    // Peek at the next token to see if an argument was provided
+    // Peek at the next token to see if an argument was provided.
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
     if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR) {
-        // Case 1: No argument provided, dump the main program p-code
+        // Case 1: No argument provided, dump the main program p-code.
         dump_p_code(vm.program_p_code, "main program");
+        return;
     }
-    else {
-        // Case 2: An argument was provided, assume it's the module name
-        BasicValue module_name_val = vm.evaluate_expression();
-        if (Error::get() != 0) {
-            return; // An error occurred evaluating the expression
-        }
 
-        std::string module_name = to_upper(to_string(module_name_val));
+    // An argument was provided. Evaluate it as an expression.
+    // This will handle `DUMP GLOBAL` where GLOBAL is parsed as a variable/identifier.
+    BasicValue arg_val = vm.evaluate_expression();
+    if (Error::get() != 0) return;
 
-        if (vm.compiled_modules.count(module_name)) {
-            // Module found, dump its p_code
-            dump_p_code(vm.compiled_modules.at(module_name).p_code, module_name);
+    std::string arg_str = to_upper(to_string(arg_val));
+
+    if (arg_str == "GLOBAL") {
+        TextIO::print("--- Global Variables ---\n");
+        if (vm.variables.empty()) {
+            TextIO::print("(No global variables defined)\n");
         }
         else {
-            TextIO::print("? Error: Module '" + module_name + "' not found or not compiled.\n");
+            for (const auto& pair : vm.variables) {
+                TextIO::print(pair.first + " = " + to_string(pair.second) + "\n");
+            }
+        }
+    }
+    else if (arg_str == "LOCAL") {
+        TextIO::print("--- Local Variables ---\n");
+        if (vm.call_stack.empty()) {
+            TextIO::print("(Not inside a function/subroutine)\n");
+        }
+        else {
+            const auto& locals = vm.call_stack.back().local_variables;
+            if (locals.empty()) {
+                TextIO::print("(No local variables in current scope)\n");
+            }
+            else {
+                for (const auto& pair : locals) {
+                    TextIO::print(pair.first + " = " + to_string(pair.second) + "\n");
+                }
+            }
+        }
+    }
+    else {
+        // Fallback to original behavior: dump p-code for a module.
+        if (vm.compiled_modules.count(arg_str)) {
+            dump_p_code(vm.compiled_modules.at(arg_str).p_code, arg_str);
+        }
+        else {
+            TextIO::print("? Error: Module '" + arg_str + "' not found, or invalid DUMP argument.\n");
         }
     }
 }

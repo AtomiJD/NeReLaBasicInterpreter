@@ -3,7 +3,7 @@ Dim o_map[20]
 
 s_map = [1,5,8,7,45,66,12]
 
-sub printresult result[]
+sub printresult(result[])
    for i = 0 to len(result)-1
        if result[i]>0 then
            print result[i], " ";

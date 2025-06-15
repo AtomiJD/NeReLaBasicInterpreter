@@ -21,9 +21,11 @@ public:
     uint16_t linenr = 0;
 
     uint8_t graphmode = 0;
-    uint8_t fgcolor = 32;
-    uint8_t bgcolor = 40;
+    uint8_t fgcolor = 2;
+    uint8_t bgcolor = 0;
     uint8_t trace = 0;
+    bool is_stopped = false;
+
     uint16_t runtime_current_line = 0;
     uint16_t current_source_line = 0;
 
@@ -119,6 +121,7 @@ public:
     BasicValue parse_comparison();
     BasicValue parse_term();
     BasicValue parse_primary();
+    BasicValue parse_unary();
     BasicValue parse_factor();
     bool compile_module(const std::string& module_name, const std::string& module_source_code);
     uint8_t tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source);

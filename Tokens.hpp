@@ -65,6 +65,7 @@ namespace Tokens {
         C_NE = 0x37, // Not Equal <> (use any available code)
         C_LE = 0x38, // Less than or Equal <=
         C_GE = 0x39, // Greater than or Equal >=
+        C_COLON = 0x3A,
         MODULE = 0x40,
         GOFUNC = 0x41,
         F_INC = 0x42,
@@ -76,7 +77,9 @@ namespace Tokens {
         EXPORT = 0x48, // c++20 module
         IMPORT = 0x49, // c++20 module
         FLUPP = 0x4C,
-        INPUT = 0x4D, // continue with 0xBA!
+        INPUT = 0x4D, 
+        STOP = 0x50,    
+        RESUME = 0x51,  
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

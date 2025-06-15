@@ -24,6 +24,6 @@ export func add_and_double(a, b)
 endfunc
 
 ' This is an exported procedure.
-export sub print_sum a, b 
+export sub print_sum(a, b)
     print a; " + "; b; " = "; add(a,b)
 endsub

@@ -10,4 +10,6 @@ namespace TextIO {
     void nl(); // Newline
     void clearScreen();
     void setColor(uint8_t foreground, uint8_t background);
+    void locate(int row, int col);
+    void setCursor(bool on);
 }

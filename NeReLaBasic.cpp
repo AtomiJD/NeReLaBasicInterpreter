@@ -84,6 +84,7 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     filename.reserve(40);
     active_function_table = &main_function_table;
     register_builtin_functions(*this, *active_function_table);
+    srand(static_cast<unsigned int>(time(nullptr)));
 }
 
 void NeReLaBasic::init_screen() {
@@ -130,6 +131,22 @@ void NeReLaBasic::start() {
         if (!std::getline(std::cin, inputLine) || inputLine.empty()) {
             std::cin.clear();
             continue;
+        }
+
+        // -- - Special handling for RESUME-- -
+        std::string temp_line = inputLine;
+        StringUtils::trim(temp_line);
+        if (StringUtils::to_upper(temp_line) == "RESUME") {
+            if (is_stopped) {
+                TextIO::print("Resuming...\n");
+                is_stopped = false;
+                execute(program_p_code); // Continues from the saved pcode
+                if (Error::get() != 0) Error::print();
+            }
+            else {
+                TextIO::print("?Nothing to resume.\n");
+            }
+            continue; // Go back to the REPL prompt
         }
 
         // Tokenize the direct-mode line, passing '0' as the line number
@@ -243,29 +260,29 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
         char action_suffix = (suffix_ptr < lineinput.length()) ? lineinput[suffix_ptr] : '\0';
 
-        switch (action_suffix) {
-        case '(':
-            // It's a function call. The buffer already holds the full name (e.g., "INKEY$").
-            prgptr = suffix_ptr; // Move pointer past any spaces
-            return Tokens::ID::CALLFUNC;
-        case '[':
-            prgptr = suffix_ptr;
-            return Tokens::ID::ARRAY_ACCESS;
-        case '@':
-            prgptr = suffix_ptr + 1;
-            return Tokens::ID::FUNCREF;
-        case ':':
+        if (is_start_of_statement && action_suffix == ':') {
             prgptr = suffix_ptr + 1;
             return Tokens::ID::LABEL;
-        default:
-            // It's a variable. The buffer already has the full name.
-            // We just need to return the correct variable token type.
-            if (buffer.back() == '$') {
-                return Tokens::ID::STRVAR;
-            }
-            else {
-                return Tokens::ID::VARIANT;
-            }
+        }
+        if (action_suffix == '(') {
+            prgptr = suffix_ptr;
+            return Tokens::ID::CALLFUNC;
+        }
+        if (action_suffix == '[') {
+            prgptr = suffix_ptr;
+            return Tokens::ID::ARRAY_ACCESS;
+        }
+        if (action_suffix == '@') {
+            prgptr = suffix_ptr + 1;
+            return Tokens::ID::FUNCREF;
+        }
+
+        // If none of the above special cases match, it's a variable.
+        if (buffer.back() == '$') {
+            return Tokens::ID::STRVAR;
+        }
+        else {
+            return Tokens::ID::VARIANT;
         }
     }
 
@@ -298,6 +315,7 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case '=': return Tokens::ID::C_EQ;
     case '[': return Tokens::ID::C_LEFTBRACKET;
     case ']': return Tokens::ID::C_RIGHTBRACKET;
+    case ':': return Tokens::ID::C_COLON;
     }
 
     // If we get here, the character is not recognized.
@@ -314,6 +332,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
     out_p_code.push_back((lineNumber >> 8) & 0xFF);
 
     bool is_start_of_statement = true;
+    bool is_one_liner_if = false;
 
     // Single loop to process all tokens on the line.
     while (prgptr < lineinput.length()) {
@@ -331,7 +350,10 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
         if (token == Tokens::ID::NOCMD) break; // End of line reached.
 
         // Any token other than a comment or label means we are no longer at the start of a statement
-        if (token != Tokens::ID::LABEL && token != Tokens::ID::REM) {
+        if (token == Tokens::ID::C_COLON) {
+            is_start_of_statement = true;
+        }
+        else if (token != Tokens::ID::LABEL && token != Tokens::ID::REM) {
             is_start_of_statement = false;
         }
 
@@ -344,7 +366,6 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             continue;
 
             // Keywords that are ignored at compile-time (they are just markers).
-        case Tokens::ID::THEN:
         case Tokens::ID::TO:
         case Tokens::ID::STEP:
             continue; // Do nothing, just consume the token.
@@ -422,23 +443,42 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
             // --- Use stringstream for robust parameter parsing ---
             // Find the rest of the line after the procedure name.
-            std::string all_params_str = lineinput.substr(prgptr);
+ /*           std::string all_params_str = lineinput.substr(prgptr);
             std::stringstream pss(all_params_str);
             std::string param_buffer;
 
             auto trim = [](std::string& s) {
                 s.erase(0, s.find_first_not_of(" \t\n\r"));
                 s.erase(s.find_last_not_of(" \t\n\r") + 1);
-                };
+                };*/
 
             // Read from the string stream, using ',' as a delimiter.
-            while (std::getline(pss, param_buffer, ',')) {
-                trim(param_buffer);
-                if (param_buffer.length() > 2 && param_buffer.substr(param_buffer.length() - 2) == "[]") {
-                    param_buffer.resize(param_buffer.length() - 2);
-                }
-                if (!param_buffer.empty()) {
-                    info.parameter_names.push_back(to_upper(param_buffer));
+            //while (std::getline(pss, param_buffer, ',')) {
+            //    trim(param_buffer);
+            //    if (param_buffer.length() > 2 && param_buffer.substr(param_buffer.length() - 2) == "[]") {
+            //        param_buffer.resize(param_buffer.length() - 2);
+            //    }
+            //    if (!param_buffer.empty()) {
+            //        info.parameter_names.push_back(to_upper(param_buffer));
+            //    }
+            //}
+
+            size_t open_paren = line.find('(', prgptr);
+            size_t close_paren = line.rfind(')');
+            if (open_paren != std::string::npos && close_paren != std::string::npos) {
+                auto trim = [](std::string& s) {
+                    s.erase(0, s.find_first_not_of(" \t\n\r"));
+                    s.erase(s.find_last_not_of(" \t\n\r") + 1);
+                    };
+                std::string params_str = line.substr(open_paren + 1, close_paren - (open_paren + 1));
+                std::stringstream pss(params_str);
+                std::string param;
+                while (std::getline(pss, param, ',')) {
+                    trim(param);
+                    if (param.length() > 2 && param.substr(param.length() - 2) == "[]") {
+                        param.resize(param.length() - 2);
+                    }
+                    if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                 }
             }
 
@@ -502,11 +542,28 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             if_stack.push_back({ (uint16_t)out_p_code.size(), current_source_line }); // Save address of the placeholder
             out_p_code.push_back(0); // Placeholder byte 1
             out_p_code.push_back(0); // Placeholder byte 2
-            //prgptr = lineinput.length(); // The rest of the line is params, so we consume it.
-            //prgptr = out_p_code.size(); // The rest of the line is params, so we consume it.
             break; // The expression after IF will be tokenized next
         }
+        case Tokens::ID::THEN: {
+            // This is the key decision point. We look ahead without consuming tokens.
+            size_t peek_ptr = prgptr;
+            while (peek_ptr < lineinput.length() && StringUtils::isspace(lineinput[peek_ptr])) {
+                peek_ptr++;
+            }
+            // If nothing but a comment or whitespace follows THEN, it's a block IF.
+            // Otherwise, it's a single-line IF.
+            if (peek_ptr < lineinput.length() && lineinput[peek_ptr] != '\'') {
+                is_one_liner_if = true;
+            }
+            // We never write the THEN token to bytecode, so we just continue.
+            continue;
+        }
         case Tokens::ID::ELSE: {
+            // A single-line IF cannot have an ELSE clause.
+            if (is_one_liner_if) {
+                Error::set(1, current_source_line); // Syntax Error
+                continue; // Stop processing this token
+            }
             // Pop the IF's placeholder address from the stack.
             IfStackInfo if_info = if_stack.back();
             if_stack.pop_back();
@@ -525,6 +582,11 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             continue;
         }
         case Tokens::ID::ENDIF: {
+            // A single-line IF does not use an explicit ENDIF.
+            if (is_one_liner_if) {
+                Error::set(1, current_source_line); // Syntax Error
+                continue; // Stop processing this token
+            }
             // Pop the corresponding IF or ELSE placeholder address from the stack.
             IfStackInfo last_if_info = if_stack.back();
             if_stack.pop_back();
@@ -586,7 +648,21 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
         }
         }
     }
+    if (is_one_liner_if) {
+        if (!if_stack.empty()) {
+            // This performs the ENDIF logic implicitly by patching the jump address.
+            IfStackInfo last_if_info = if_stack.back();
+            if_stack.pop_back();
 
+            uint16_t jump_target = out_p_code.size();
+            out_p_code[last_if_info.patch_address] = jump_target & 0xFF;
+            out_p_code[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+        }
+        else {
+            // This indicates a compiler logic error, but we can safeguard against it.
+            Error::set(4, current_source_line); // Unclosed IF
+        }
+    }
     // Every line of bytecode ends with a carriage return token.
     out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::C_CR));
     return 0; // Success
@@ -809,25 +885,45 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
         }
         // Use the active_p_code pointer to access the bytecode
 
-
         runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
         pcode += 2;
 
         if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
             break;
         }
+        bool line_is_done = false;
+        while (!line_is_done && pcode < active_p_code->size()) {
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR)
+                statement();
+            if (Error::get() != 0 || is_stopped) {
+                line_is_done = true; // Stop processing this line on error
+                continue;
+            }
 
-        while (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
-            statement();
-            if (Error::get() != 0) break;
+            // After the statement, check the token that follows.
+            if (pcode < active_p_code->size()) {
+                Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (next_token == Tokens::ID::C_COLON) {
+                    pcode++; // Consume the separator and loop again for the next statement.
+                }
+                else {
+                    // Token (C_CR, NOCMD) means the line is finished.
+                    if (next_token == Tokens::ID::C_CR || next_token == Tokens::ID::NOCMD) {
+                        line_is_done = true;
+                    }
+                }
+            }
         }
 
-        if (Error::get() != 0) {
+        if (Error::get() != 0 || is_stopped) {
             break;
         }
 
         // Check bounds before consuming C_CR
-        if (pcode < active_p_code->size()) {
+        //if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
+        //    pcode++; // Consume the C_CR
+        //}
+        if (pcode < active_p_code->size() && (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD)) {
             pcode++; // Consume the C_CR
         }
     }
@@ -835,46 +931,6 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
     // Clear the pointer so it's not pointing to stale data
     active_p_code = prev_active_p_code;
 }
-
-//void NeReLaBasic::run_program() {
-//
-//    if (!if_stack.empty()) {
-//        // There are unclosed IF blocks. Get the line number of the last one.
-//        uint16_t error_line = if_stack.back().source_line;
-//        Error::set(4, error_line); // New Error: Missing ENDIF
-//        return; // Stop before running faulty code
-//    }
-//
-//    // Setup for execution
-//    variables.clear();
-//    arrays.clear();
-//    call_stack.clear();
-//    for_stack.clear();
-//    Error::clear();
-//    pcode = 0; // Set program counter to the start of the bytecode
-//
-//    this->active_function_table = &this->main_function_table;
-//
-//    TextIO::print("Running...\n");
-//    // Main execution loop
-//    while (pcode < program_p_code.size()) {
-//        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) break;
-//
-//        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
-//        pcode += 2;
-//
-//        while (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
-//            statement();
-//            if (Error::get() != 0) break;
-//        }
-//
-//        if (Error::get() != 0) {
-//            Error::print();
-//            break;
-//        }
-//        pcode++; // Consume the C_CR
-//    }
-//}
 
 void NeReLaBasic::statement() {
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]); // Peek at the token
@@ -990,6 +1046,11 @@ void NeReLaBasic::statement() {
     case Tokens::ID::RUN:
         pcode++;
         Commands::do_run(*this);
+        break;
+
+    case Tokens::ID::STOP:
+        pcode++;
+        Commands::do_stop(*this);
         break;
 
     case Tokens::ID::TRON:
@@ -1122,10 +1183,10 @@ BasicValue NeReLaBasic::parse_primary() {
         pcode++;
         return result;
     }
-    if (token == Tokens::ID::NOT) {
-        pcode++;
-        return !to_bool(parse_primary());
-    }
+    //if (token == Tokens::ID::NOT) {
+    //    pcode++;
+    //    return !to_bool(parse_primary());
+    //}
     if (token == Tokens::ID::CALLFUNC) {
         pcode++; // Consume CALLFUNC token
         std::string identifier_being_called = to_upper(read_string(*this));
@@ -1176,14 +1237,34 @@ BasicValue NeReLaBasic::parse_primary() {
     return false;
 }
 
+// Level 5: Handles unary operators like - and NOT
+BasicValue NeReLaBasic::parse_unary() {
+    Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+
+    if (token == Tokens::ID::C_MINUS) {
+        pcode++; // Consume the '-'
+        // Recursively call to handle expressions like -(5+2) or -x
+        // Note: The result of a unary minus is always a number.
+        return -to_double(parse_unary());
+    }
+    if (token == Tokens::ID::NOT) {
+        pcode++; // Consume 'NOT'
+        // The result of NOT is always a boolean.
+        return !to_bool(parse_unary());
+    }
+
+    // If there is no unary operator, parse the primary expression.
+    return parse_primary();
+}
+
 // Level 4: Handles * and /
 BasicValue NeReLaBasic::parse_factor() {
-    BasicValue left = parse_primary();
+    BasicValue left = parse_unary();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
         if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD) {
             pcode++;
-            BasicValue right = parse_primary();
+            BasicValue right = parse_unary();
             if (op == Tokens::ID::C_ASTR) {
                 left = to_double(left) * to_double(right);
             }

@@ -212,6 +212,34 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return std::string("");
 }
 
+// VAL(string_expression) -> number
+BasicValue builtin_val(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, 0); // Wrong number of arguments
+        return 0.0;
+    }
+    std::string s = to_string(args[0]);
+    try {
+        // std::stod will parse the string until it finds a non-numeric character.
+        // This behavior is very similar to classic BASIC VAL().
+        return std::stod(s);
+    }
+    catch (const std::exception&) {
+        // If the string is not a valid number at all (e.g., "hello")
+        return 0.0;
+    }
+}
+
+// STR$(numeric_expression) -> string
+BasicValue builtin_str_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, 0); // Wrong number of arguments
+        return std::string("");
+    }
+    // to_string is already a helper in your project that does this conversion.
+    return to_string(args[0]);
+}
+
 
 // --- Arithmetic Functions ---
 
@@ -238,6 +266,19 @@ BasicValue builtin_sqr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) return 0.0;
     double val = to_double(args[0]);
     return (val < 0) ? 0.0 : std::sqrt(val); // Return 0 for negative input
+}
+
+// RND(numeric_expression) -> returns a random number between 0.0 and 1.0
+BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return 0.0;
+    }
+
+    // Classic BASIC RND(1) returns a value between 0.0 and 0.999...
+    // We can ignore the argument's value for this simple, standard implementation.
+    // RAND_MAX is a constant defined in <cstdlib>.
+    return static_cast<double>(rand()) / (RAND_MAX + 1.0);
 }
 
 // --- Date and Time Functions ---
@@ -356,6 +397,44 @@ BasicValue builtin_cls(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false; // Procedures must return something; the value is ignored.
 }
 
+BasicValue builtin_locate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+
+    int row = static_cast<int>(to_double(args[0]));
+    int col = static_cast<int>(to_double(args[1]));
+
+    TextIO::locate(row, col);
+
+    return false; // Procedures return a dummy value.
+}
+
+// SLEEP milliseconds
+BasicValue builtin_sleep(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+    int milliseconds = static_cast<int>(to_double(args[0]));
+    if (milliseconds > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+    }
+    return false;
+}
+
+// CURSOR state (0 for off, 1 for on)
+BasicValue builtin_cursor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    bool state = to_bool(args[0]); // to_bool handles 0/1 conversion nicely
+    TextIO::setCursor(state);
+    return false;
+}
+
 // --- Filesystem ---
 // DIR [path_string]
 BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -452,6 +531,49 @@ BasicValue builtin_pwd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
+// MKDIR path_string
+BasicValue builtin_mkdir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, 0); // Wrong number of arguments
+        return false;
+    }
+    std::string path_str = to_string(args[0]);
+    try {
+        if (fs::create_directory(path_str)) {
+            TextIO::print("Directory created: " + path_str + "\n");
+        }
+        else {
+            TextIO::print("Directory already exists or error.\n");
+        }
+    }
+    catch (const fs::filesystem_error& e) {
+        TextIO::print("Error creating directory: " + std::string(e.what()) + "\n");
+    }
+    return false;
+}
+
+// KILL path_string (deletes a file)
+BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, 0); // Wrong number of arguments
+        return false;
+    }
+    std::string path_str = to_string(args[0]);
+    try {
+        if (fs::remove(path_str)) {
+            TextIO::print("File deleted: " + path_str + "\n");
+        }
+        else {
+            TextIO::print("File not found or is a non-empty directory.\n");
+        }
+    }
+    catch (const fs::filesystem_error& e) {
+        TextIO::print("Error deleting file: " + std::string(e.what()) + "\n");
+    }
+    return false;
+}
+
+
 // --- GUI and Graphic and more ---
 // Handles: COLOR fg, bg
 BasicValue builtin_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -496,12 +618,16 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("UCASE$", 1, builtin_ucase_str);
     register_func("TRIM$", 1, builtin_trim_str);
     register_func("INKEY$", 0, builtin_inkey);
+    register_func("VAL", 1, builtin_val);
+    register_func("STR$", 1, builtin_str_str);
     
     // --- Register Math Functions ---
     register_func("SIN", 1, builtin_sin);
     register_func("COS", 1, builtin_cos);
     register_func("TAN", 1, builtin_tan);
     register_func("SQR", 1, builtin_sqr);
+    register_func("RND", 1, builtin_rnd);
+
 
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);
@@ -523,10 +649,16 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
     // --- Register Methods ---
     register_proc("CLS", 0, builtin_cls);
+    register_proc("LOCATE", 2, builtin_locate);
+    register_proc("SLEEP", 1, builtin_sleep);   
+    register_proc("CURSOR", 1, builtin_cursor);
+
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
     register_proc("CD", 1, builtin_cd);
     register_proc("PWD", 0, builtin_pwd);
     register_proc("COLOR", 2, builtin_color);
+    register_proc("MKDIR", 1, builtin_mkdir); 
+    register_proc("KILL", 1, builtin_kill);   
 
 }
 
