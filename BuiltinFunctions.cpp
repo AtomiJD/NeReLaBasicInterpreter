@@ -387,6 +387,40 @@ BasicValue builtin_dateadd(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 
     return DateTime{ std::chrono::system_clock::from_time_t(new_time_t) };
 }
+// CVDATE(string_expression) -> DateTime
+// Parses a string like "YYYY-MM-DD" into a DateTime object.
+BasicValue builtin_cvdate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false; // Return boolean false on error
+    }
+
+    std::string date_str = to_string(args[0]);
+    std::tm tm = {};
+    std::stringstream ss(date_str);
+
+    // Try to parse the date in "YYYY-MM-DD" format.
+    // Check for leftover characters by peeking.
+    ss >> std::get_time(&tm, "%Y-%m-%d");
+
+    if (ss.fail() || ss.peek() != EOF) {
+        // If parsing failed or there's extra junk in the string.
+        Error::set(15, vm.runtime_current_line); // Type Mismatch is a suitable error
+        return false; // Return boolean false on error
+    }
+
+    // Convert std::tm to time_t, then to a time_point
+    time_t time = std::mktime(&tm);
+    if (time == -1) {
+        // mktime can fail if the tm struct is invalid
+        Error::set(15, vm.runtime_current_line);
+        return false;
+    }
+    auto time_point = std::chrono::system_clock::from_time_t(time);
+
+    // Return the new DateTime object
+    return DateTime{ time_point };
+}
 
 
 // --- Procedures ---
@@ -635,6 +669,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("DATE$", 0, builtin_date_str);
     register_func("TIME$", 0, builtin_time_str);
     register_func("DATEADD", 3, builtin_dateadd);
+    register_func("CVDATE", 1, builtin_cvdate);
 
     // --- Register Procedures ---
 

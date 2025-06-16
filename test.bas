@@ -116,6 +116,11 @@ PRINT "ASCII for 'A' is "; ASC("A")
 PRINT "Character for 66 is "; CHR$(66)
 PRINT
 
+PRINT "VAL of '100.00' is "; VAL("100.00")
+PRINT "STR of 100.00 is "; STR$(100.00)
+PRINT
+
+
 HAYSTACK$ = "the quick brown fox jumps over the lazy dog"
 PRINT "Position of 'fox' is "; INSTR(HAYSTACK$, "fox")
 PRINT "Position of 'the' after pos 5 is "; INSTR(5, HAYSTACK$, "the")
@@ -129,7 +134,32 @@ PRINT "The square root of ";X;" is "; SQR(X)
 PI = 3.14159
 PRINT "The sine of PI/2 is roughly "; SIN(PI / 2)
 
-PRINT "--- String and Math Function Test COMPLETE ---"
+print "10 random, Numbers: ";
+for i = 1 to 10
+PRINT RND(1); " ";
+Next i
+print
+PRINT "--- DATE Test ---"
+Print "Tick: "; Tick()
+Print "Now: "; Now()
+
+DIM deadline AS DATE
+DIM name AS STRING
+
+name = "Project Apollo"
+deadline = CVDate("2025-07-01")
+
+PRINT "Deadline for "; name; " is "; deadline
+
+deadline = DATEADD("D", 10, deadline)
+PRINT "Extended deadline is "; deadline
+
+If deadline > Now() then
+   print "Deadline is greater"
+endif
+
+print "done"
+PRINT "--- String, Math and DATE Function Test COMPLETE ---"
 
 
 funci:
@@ -169,7 +199,7 @@ print
 print "Done"
 print "------------------------"
 
-print "Simple recursion"
+print "Factional recursion"
 print
 
 func factorial(a)
@@ -190,11 +220,79 @@ print "------------------------"
 print "Simple recursion"
 print
 
-func printnumbers(n)
-    if n > 0 then
+func count_asc(n)
+   if n < 0 then return n
+   count_asc(n-1)
+   print n
+endfunc
+
+func count_desc(n)
+    if n >= 0 then
         print n
-	r=printnumbers(n - 1)
+	r=count_desc(n - 1)
     endif
 endfunc
 
-r=printnumbers(5)  ' returns 5, 4, 3, 2, 1
+print "Result ASC: "
+count_asc(5)
+print "Result DEC: "
+count_desc(5)
+
+print
+print "Done"
+print "------------------------"
+
+print "Map and Filter"
+print
+
+Dim s_map[20]
+Dim o_map[20]
+
+s_map = [1,5,8,7,45,66,12]
+
+sub printresult(result[])
+   for i = 0 to len(result)-1
+       if result[i]>0 then
+           print result[i], " ";
+       endif
+   next i
+endsub
+
+func iseven(a)
+   if a mod 2 = 0 then
+      r=1
+   else
+      r=0
+   endif
+   return r
+endfunc
+
+func filter(fu,in[],out[])
+   j=0
+   for i = 0 to len(in) - 1
+      m=fu(in[i])
+      if m = 1 then
+         out[j]=in[i]
+         j=j+1
+      endif
+   next i
+endfunc
+
+filter(iseven@,s_map[],o_map[])
+
+print "Result filter: "
+printresult o_map[]
+
+print
+print "Done"
+print "------------------------"
+
+PRINT "Single Line IF Test"
+print
+
+FOR i = 0 to 10
+	IF I = 5 THEN PRINT "LALL"; I
+	PRINT "LULL"; i
+NEXT I
+PRINT "ENDE"
+

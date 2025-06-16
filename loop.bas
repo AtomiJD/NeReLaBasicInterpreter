@@ -1,37 +1,17 @@
-Dim s_map[20]
-Dim o_map[20]
+Print "Tick: "; Tick()
+Print "Now: "; Now()
 
-s_map = [1,5,8,7,45,66,12]
+DIM deadline AS DATE
+DIM name AS STRING
 
-sub printresult(result[])
-   for i = 0 to len(result)-1
-       if result[i]>0 then
-           print result[i], " ";
-       endif
-   next i
-endsub
+name = "Project Apollo"
+deadline = CVDate("2025-07-01")
 
-func iseven(a)
-   if a mod 2 = 0 then
-      r=1
-   else
-      r=0
-   endif
-   return r
-endfunc
+PRINT "Deadline for "; name; " is "; deadline
 
-func filter(fu,in[],out[])
-   j=0
-   for i = 0 to len(in) - 1
-      m=fu(in[i])
-      if m = 1 then
-         out[j]=in[i]
-         j=j+1
-      endif
-   next i
-endfunc
+deadline = DATEADD("D", 10, deadline)
+PRINT "Extended deadline is "; deadline
 
-filter(iseven@,s_map[],o_map[])
-
-print "Result filter: "
-printresult o_map[]
+If deadline > Now() then
+   print "Deadline is greater"
+endif
