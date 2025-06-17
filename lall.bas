@@ -1,27 +1,34 @@
-' Save this file as main.bas
+' Traditional Functional/Procedural Approach for jdBasic
+' ----------------------------------------------------
 
-' Import the MATH module. The interpreter will look for "MATH.bas"
-' and compile it before running this program.
-import MATH;
+PRINT "--- Functional Style ---"
 
-print "--- Module Test Program ---"
-print
+' A reusable function to test if a single number N is prime.
+FUNC IS_PRIME(N)
+    ' Numbers less than 2 are not prime.
+    Ret = FALSE
+    IF N < 2 THEN RETURN FALSE
+    ' 2 is the only even prime.
+    IF N = 2 THEN RETURN TRUE
+    ' All other even numbers are not prime.
+    IF N MOD 2 = 0 THEN RETURN FALSE
 
-' Call the exported 'add' function from the MATH module
-print "Calling MATH.ADD(15, 7)..."
-x = MATH.ADD(15, 7)
-print "Result:"; x
-print
+    ' Check for odd divisors from 3 up to the square root of N.
+    LIMIT = SQR(N)
+    FOR D = 3 TO LIMIT STEP 2
+        IF N MOD D = 0 THEN
+            Ret = FALSE
+        ENDIF
+    NEXT D
+    ' If the loop finishes, no divisors were found. It's prime.
+    RETURN TRUE
+ENDFUNC
 
-' Call the exported 'add_and_double' function
-print "Calling MATH.ADD_AND_DOUBLE(10, 5)..."
-y = MATH.ADD_AND_DOUBLE(10, 5)
-print "Result:"; y
-print
-
-' Call the exported 'print_sum' procedure
-print "Calling MATH.PRINT_SUM(100, 23)..."
-MATH.PRINT_SUM(100, 23)
-print
-
-print "--- Module Test Complete ---"
+' Main loop: Test every number from 1 to 100 using our function.
+PRINT "Primes up to 100:"
+FOR I = 1 TO 100
+    IF IS_PRIME(I) THEN
+        PRINT I; " ";
+    ENDIF
+NEXT I
+PRINT ""

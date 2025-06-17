@@ -274,6 +274,108 @@ BasicValue builtin_str_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 
 // --- Vector and Matrx functions
 
+// In BuiltinFunctions.cpp, add these new functions
+
+// --- NEW: Array Reduction Functions ---
+
+// Helper macro to reduce boilerplate for numeric reduction functions
+#define NUMERIC_REDUCTION_BOILERPLATE(function_name, error_code_on_mismatch) \
+    if (args.size() != 1) { \
+        Error::set(8, vm.runtime_current_line); \
+        return 0.0; \
+    } \
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { \
+        Error::set(15, vm.runtime_current_line); \
+        return 0.0; \
+    } \
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]); \
+    if (!arr_ptr || arr_ptr->data.empty()) { \
+        return 0.0; \
+    }
+
+// SUM(array) -> number
+BasicValue builtin_sum(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    NUMERIC_REDUCTION_BOILERPLATE(builtin_sum, 15);
+    double total = 0.0;
+    for (const auto& val : arr_ptr->data) {
+        total += to_double(val);
+    }
+    return total;
+}
+
+// PRODUCT(array) -> number
+BasicValue builtin_product(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    NUMERIC_REDUCTION_BOILERPLATE(builtin_product, 15);
+    double total = 1.0;
+    for (const auto& val : arr_ptr->data) {
+        total *= to_double(val);
+    }
+    return total;
+}
+
+// MIN(array) -> number
+BasicValue builtin_min(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    NUMERIC_REDUCTION_BOILERPLATE(builtin_min, 15);
+    double min_val = to_double(arr_ptr->data[0]);
+    for (size_t i = 1; i < arr_ptr->data.size(); ++i) {
+        double current_val = to_double(arr_ptr->data[i]);
+        if (current_val < min_val) {
+            min_val = current_val;
+        }
+    }
+    return min_val;
+}
+
+// MAX(array) -> number
+BasicValue builtin_max(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    NUMERIC_REDUCTION_BOILERPLATE(builtin_max, 15);
+    double max_val = to_double(arr_ptr->data[0]);
+    for (size_t i = 1; i < arr_ptr->data.size(); ++i) {
+        double current_val = to_double(arr_ptr->data[i]);
+        if (current_val > max_val) {
+            max_val = current_val;
+        }
+    }
+    return max_val;
+}
+
+// Helper macro for boolean reduction functions
+#define BOOLEAN_REDUCTION_BOILERPLATE(function_name, error_code_on_mismatch) \
+    if (args.size() != 1) { \
+        Error::set(8, vm.runtime_current_line); \
+        return false; \
+    } \
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { \
+        Error::set(15, vm.runtime_current_line); \
+        return false; \
+    } \
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]); \
+    if (!arr_ptr) return false;
+
+// ANY(array) -> boolean
+BasicValue builtin_any(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    BOOLEAN_REDUCTION_BOILERPLATE(builtin_any, 15);
+    if (arr_ptr->data.empty()) return false; // ANY of an empty set is false
+    for (const auto& val : arr_ptr->data) {
+        if (to_bool(val)) {
+            return true; // Short-circuit
+        }
+    }
+    return false;
+}
+
+// ALL(array) -> boolean
+BasicValue builtin_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    BOOLEAN_REDUCTION_BOILERPLATE(builtin_all, 15);
+    if (arr_ptr->data.empty()) return true; // ALL of an empty set is true
+    for (const auto& val : arr_ptr->data) {
+        if (!to_bool(val)) {
+            return false; // Short-circuit
+        }
+    }
+    return true;
+}
+
 // IOTA(N) -> vector
 // Generates a vector of numbers from 1 to N.
 BasicValue builtin_iota(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -407,6 +509,190 @@ BasicValue builtin_transpose(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     }
 
     return new_array_ptr;
+}
+
+// MATMUL(matrixA, matrixB) -> matrix
+// Performs standard linear algebra matrix multiplication.
+BasicValue builtin_matmul(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line); return {};
+    }
+
+    const auto& a_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& b_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+
+    if (!a_ptr || !b_ptr || a_ptr->shape.size() != 2 || b_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line); // Must be matrices
+        return {};
+    }
+
+    size_t rows_a = a_ptr->shape[0];
+    size_t cols_a = a_ptr->shape[1];
+    size_t rows_b = b_ptr->shape[0];
+    size_t cols_b = b_ptr->shape[1];
+
+    if (cols_a != rows_b) {
+        Error::set(15, vm.runtime_current_line); // Inner dimensions must match
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = { rows_a, cols_b };
+    result_ptr->data.resize(rows_a * cols_b);
+
+    for (size_t r = 0; r < rows_a; ++r) {
+        for (size_t c = 0; c < cols_b; ++c) {
+            double dot_product = 0.0;
+            for (size_t i = 0; i < cols_a; ++i) { // cols_a is the common dimension
+                dot_product += to_double(a_ptr->data[r * cols_a + i]) * to_double(b_ptr->data[i * cols_b + c]);
+            }
+            result_ptr->data[r * cols_b + c] = dot_product;
+        }
+    }
+    return result_ptr;
+}
+
+// OUTER(arrayA, arrayB, operator_string) -> array
+// Creates a combination table by applying an operator to all pairs of elements.
+BasicValue builtin_outer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line); return {};
+    }
+    if (!std::holds_alternative<std::string>(args[2])) {
+        Error::set(15, vm.runtime_current_line); return {};
+    }
+
+    const auto& a_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& b_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const std::string op = std::get<std::string>(args[2]);
+
+    if (!a_ptr || !b_ptr) return {};
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = a_ptr->shape; // Start with shape of A
+    result_ptr->shape.insert(result_ptr->shape.end(), b_ptr->shape.begin(), b_ptr->shape.end()); // Append shape of B
+    result_ptr->data.reserve(a_ptr->data.size() * b_ptr->data.size());
+
+    for (const auto& val_a : a_ptr->data) {
+        for (const auto& val_b : b_ptr->data) {
+            double num_a = to_double(val_a);
+            double num_b = to_double(val_b);
+
+            if (op == "+") result_ptr->data.push_back(num_a + num_b);
+            else if (op == "-") result_ptr->data.push_back(num_a - num_b);
+            else if (op == "*") result_ptr->data.push_back(num_a * num_b);
+            else if (op == "/") {
+                if (num_b == 0.0) { Error::set(2, vm.runtime_current_line); return {}; }
+                result_ptr->data.push_back(num_a / num_b);
+            }
+            else if (op == "=") result_ptr->data.push_back(num_a == num_b);
+            else if (op == ">") result_ptr->data.push_back(num_a > num_b);
+            else if (op == "<") result_ptr->data.push_back(num_a < num_b);
+            // Add other operators as needed...
+            else { Error::set(1, vm.runtime_current_line); return {}; } // Invalid operator
+        }
+    }
+    return result_ptr;
+}
+
+// --- Slicing and Sorting Functions ---
+
+// TAKE(N, array) -> vector
+// Takes the first N elements (or last N if N is negative) from an array.
+BasicValue builtin_take(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) { Error::set(15, vm.runtime_current_line); return {}; }
+
+    int count = static_cast<int>(to_double(args[0]));
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!arr_ptr) return {};
+
+    if (count == 0) {
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = { 0 };
+        return result_ptr;
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    if (count > 0) { // Take from start
+        size_t num_to_take = std::min((size_t)count, arr_ptr->data.size());
+        result_ptr->shape = { num_to_take };
+        result_ptr->data.assign(arr_ptr->data.begin(), arr_ptr->data.begin() + num_to_take);
+    }
+    else { // Take from end
+        size_t num_to_take = std::min((size_t)(-count), arr_ptr->data.size());
+        result_ptr->shape = { num_to_take };
+        result_ptr->data.assign(arr_ptr->data.end() - num_to_take, arr_ptr->data.end());
+    }
+
+    return result_ptr;
+}
+
+// DROP(N, array) -> vector
+// Drops the first N elements (or last N if N is negative) from an array.
+BasicValue builtin_drop(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) { Error::set(15, vm.runtime_current_line); return {}; }
+
+    int count = static_cast<int>(to_double(args[0]));
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!arr_ptr) return {};
+
+    if (count == 0) return arr_ptr; // Return a copy of the original
+
+    auto result_ptr = std::make_shared<Array>();
+    if (count > 0) { // Drop from start
+        size_t num_to_drop = std::min((size_t)count, arr_ptr->data.size());
+        result_ptr->shape = { arr_ptr->data.size() - num_to_drop };
+        result_ptr->data.assign(arr_ptr->data.begin() + num_to_drop, arr_ptr->data.end());
+    }
+    else { // Drop from end
+        size_t num_to_drop = std::min((size_t)(-count), arr_ptr->data.size());
+        result_ptr->shape = { arr_ptr->data.size() - num_to_drop };
+        result_ptr->data.assign(arr_ptr->data.begin(), arr_ptr->data.end() - num_to_drop);
+    }
+
+    return result_ptr;
+}
+
+// GRADE(vector) -> vector
+// Returns the indices that would sort the vector in ascending order.
+BasicValue builtin_grade(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line); return {}; }
+
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr) return {};
+
+    // Create a vector of pairs, storing the original index with each value.
+    std::vector<std::pair<BasicValue, size_t>> indexed_values;
+    indexed_values.reserve(arr_ptr->data.size());
+    for (size_t i = 0; i < arr_ptr->data.size(); ++i) {
+        indexed_values.push_back({ arr_ptr->data[i], i });
+    }
+
+    // Sort this vector of pairs based on the values.
+    std::sort(indexed_values.begin(), indexed_values.end(),
+        [](const auto& a, const auto& b) {
+            // This comparison logic can be expanded to handle strings, etc.
+            // For now, it compares numerically.
+            return to_double(a.first) < to_double(b.first);
+        }
+    );
+
+    // Create a new result array containing just the sorted original indices.
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = arr_ptr->shape;
+    result_ptr->data.reserve(indexed_values.size());
+    for (const auto& pair : indexed_values) {
+        // APL is often 1-based, but 0-based is more common in modern languages.
+        // We will stick to 0-based indices.
+        result_ptr->data.push_back(static_cast<double>(pair.second));
+    }
+
+    return result_ptr;
 }
 
 
@@ -836,6 +1122,17 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("RESHAPE", -1, builtin_reshape);
     register_func("REVERSE", 1, builtin_reverse);
     register_func("TRANSPOSE", 1, builtin_transpose);
+    register_func("SUM", 1, builtin_sum);
+    register_func("PRODUCT", 1, builtin_product);
+    register_func("MIN", 1, builtin_min);
+    register_func("MAX", 1, builtin_max);
+    register_func("ANY", 1, builtin_any);
+    register_func("ALL", 1, builtin_all);
+    register_func("MATMUL", 2, builtin_matmul);
+    register_func("OUTER", 3, builtin_outer);
+    register_func("TAKE", 2, builtin_take);
+    register_func("DROP", 2, builtin_drop);
+    register_func("GRADE", 1, builtin_grade);
 
 
     // --- Register Time Functions ---

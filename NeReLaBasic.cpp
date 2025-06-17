@@ -839,6 +839,7 @@ BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info
     frame.return_p_code_ptr = this->active_p_code;
     frame.return_pcode = this->pcode;
     frame.previous_function_table_ptr = this->active_function_table;
+    frame.for_stack_size_on_entry = this->for_stack.size();
 
     for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
         if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
@@ -1334,7 +1335,7 @@ BasicValue NeReLaBasic::parse_unary() {
     return parse_primary();
 }
 
-// Level 4: Handles * and /
+// Level 4: Handles *, /, and MOD with element-wise array operations
 BasicValue NeReLaBasic::parse_factor() {
     BasicValue left = parse_unary();
     while (true) {
@@ -1342,27 +1343,87 @@ BasicValue NeReLaBasic::parse_factor() {
         if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD) {
             pcode++;
             BasicValue right = parse_unary();
-            if (op == Tokens::ID::C_ASTR) {
-                left = to_double(left) * to_double(right);
-            }
-            else if (op == Tokens::ID::C_SLASH) {
-                double r = to_double(right);
-                if (r == 0.0) { Error::set(2, runtime_current_line); return false; }
-                left = to_double(left) / r;
-            }
-            else { // op == Tokens::ID::MOD
-                long long l = static_cast<long long>(to_double(left));
-                long long r = static_cast<long long>(to_double(right));
-                if (r == 0) { Error::set(2, runtime_current_line); return false; } // Division by zero
-                left = static_cast<double>(l % r);
-            }
+
+            left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
+                using LeftT = std::decay_t<decltype(l)>;
+                using RightT = std::decay_t<decltype(r)>;
+
+                // Case 1: Array-Array operation
+                if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                    if (!l || !r) { Error::set(15, runtime_current_line); return false; } // Null array error
+                    if (l->shape != r->shape) { Error::set(15, runtime_current_line); return false; } // Shape mismatch
+
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = l->shape;
+                    result_ptr->data.reserve(l->data.size());
+
+                    for (size_t i = 0; i < l->data.size(); ++i) {
+                        double left_val = to_double(l->data[i]);
+                        double right_val = to_double(r->data[i]);
+                        if (op == Tokens::ID::C_ASTR) result_ptr->data.push_back(left_val * right_val);
+                        else if (op == Tokens::ID::C_SLASH) {
+                            if (right_val == 0.0) { Error::set(2, runtime_current_line); return false; }
+                            result_ptr->data.push_back(left_val / right_val);
+                        }
+                    }
+                    return result_ptr;
+                }
+                // Case 2: Array-Scalar operation
+                else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
+                    if (!l) { Error::set(15, runtime_current_line); return false; }
+                    double scalar = to_double(r);
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = l->shape;
+                    result_ptr->data.reserve(l->data.size());
+                    for (const auto& elem : l->data) {
+                        if (op == Tokens::ID::C_ASTR) result_ptr->data.push_back(to_double(elem) * scalar);
+                        else if (op == Tokens::ID::C_SLASH) {
+                            if (scalar == 0.0) { Error::set(2, runtime_current_line); return false; }
+                            result_ptr->data.push_back(to_double(elem) / scalar);
+                        }
+                    }
+                    return result_ptr;
+                }
+                // Case 3: Scalar-Array operation
+                else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                    if (!r) { Error::set(15, runtime_current_line); return false; }
+                    double scalar = to_double(l);
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = r->shape;
+                    result_ptr->data.reserve(r->data.size());
+                    for (const auto& elem : r->data) {
+                        if (op == Tokens::ID::C_ASTR) result_ptr->data.push_back(scalar * to_double(elem));
+                        else if (op == Tokens::ID::C_SLASH) {
+                            if (to_double(elem) == 0.0) { Error::set(2, runtime_current_line); return false; }
+                            result_ptr->data.push_back(scalar / to_double(elem));
+                        }
+                    }
+                    return result_ptr;
+                }
+                // Case 4: Fallback to simple scalar operation
+                else {
+                    if (op == Tokens::ID::C_ASTR) return to_double(l) * to_double(r);
+                    if (op == Tokens::ID::C_SLASH) {
+                        double right_val = to_double(r);
+                        if (right_val == 0.0) { Error::set(2, runtime_current_line); return false; }
+                        return to_double(l) / right_val;
+                    }
+                    if (op == Tokens::ID::MOD) {
+                        long long left_val = static_cast<long long>(to_double(l));
+                        long long right_val = static_cast<long long>(to_double(r));
+                        if (right_val == 0) { Error::set(2, runtime_current_line); return false; }
+                        return static_cast<double>(left_val % right_val);
+                    }
+                    return false; // Should not happen
+                }
+                }, left, right);
         }
         else break;
     }
     return left;
 }
 
-// Level 3: Handles + and -
+// Level 3: Handles + and - with element-wise array and string operations
 BasicValue NeReLaBasic::parse_term() {
     BasicValue left = parse_factor();
     while (true) {
@@ -1371,26 +1432,68 @@ BasicValue NeReLaBasic::parse_term() {
             pcode++;
             BasicValue right = parse_factor();
 
-            // Use std::visit to handle different type combinations
-            left = std::visit([op](auto&& l, auto&& r) -> BasicValue {
-                // If either operand is a string, do string concatenation.
-                if constexpr (std::is_same_v<std::decay_t<decltype(l)>, std::string> ||
-                    std::is_same_v<std::decay_t<decltype(r)>, std::string>) {
+            left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
+                using LeftT = std::decay_t<decltype(l)>;
+                using RightT = std::decay_t<decltype(r)>;
+
+                // Case 1: Array-Array operation
+                if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                    if (!l || !r) { Error::set(15, runtime_current_line); return false; }
+                    if (l->shape != r->shape) { Error::set(15, runtime_current_line); return false; }
+
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = l->shape;
+                    result_ptr->data.reserve(l->data.size());
+                    for (size_t i = 0; i < l->data.size(); ++i) {
+                        if (op == Tokens::ID::C_PLUS) result_ptr->data.push_back(to_double(l->data[i]) + to_double(r->data[i]));
+                        else result_ptr->data.push_back(to_double(l->data[i]) - to_double(r->data[i]));
+                    }
+                    return result_ptr;
+                }
+                // Case 2: Array-Scalar operation
+                else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
+                    if (!l) { Error::set(15, runtime_current_line); return false; }
+                    double scalar = to_double(r);
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = l->shape;
+                    result_ptr->data.reserve(l->data.size());
+                    for (const auto& elem : l->data) {
+                        if (op == Tokens::ID::C_PLUS) result_ptr->data.push_back(to_double(elem) + scalar);
+                        else result_ptr->data.push_back(to_double(elem) - scalar);
+                    }
+                    return result_ptr;
+                }
+                // Case 3: Scalar-Array operation
+                else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                    if (!r) { Error::set(15, runtime_current_line); return false; }
+                    double scalar = to_double(l);
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = r->shape;
+                    result_ptr->data.reserve(r->data.size());
+                    for (const auto& elem : r->data) {
+                        if (op == Tokens::ID::C_PLUS) result_ptr->data.push_back(scalar + to_double(elem));
+                        else result_ptr->data.push_back(scalar - to_double(elem));
+                    }
+                    return result_ptr;
+                }
+                // --- THIS IS THE FIX ---
+                // First, check the TYPES at compile time.
+                else if constexpr (std::is_same_v<LeftT, std::string> || std::is_same_v<RightT, std::string>) {
+                    // Then, check the OPERATOR VALUE at runtime.
                     if (op == Tokens::ID::C_PLUS) {
                         return to_string(l) + to_string(r);
                     }
-                    else {
-                        // Subtraction on strings is a syntax error
-                        return false; // Placeholder for error
+                    else { // Cannot subtract strings
+                        Error::set(15, runtime_current_line); // Type Mismatch
+                        return false;
                     }
                 }
-                // Otherwise, perform numeric arithmetic.
+                // Case 5: Fallback to simple scalar operation
                 else {
                     if (op == Tokens::ID::C_PLUS) return to_double(l) + to_double(r);
                     else return to_double(l) - to_double(r);
                 }
                 }, left, right);
-
         }
         else {
             break;

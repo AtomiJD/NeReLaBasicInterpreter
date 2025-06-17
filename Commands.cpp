@@ -589,7 +589,8 @@ void Commands::do_for(NeReLaBasic& vm) {
     // 3. Evaluate the start expression and assign it.
     BasicValue start_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
-    vm.variables[var_name] = start_val;
+    set_variable(vm, var_name, start_val);
+    //vm.variables[var_name] = start_val;
 
     // 4. The 'TO' keyword was skipped by the tokenizer. Evaluate the end expression.
     BasicValue end_val = vm.evaluate_expression();
@@ -628,9 +629,10 @@ void Commands::do_next(NeReLaBasic& vm) {
     NeReLaBasic::ForLoopInfo& current_loop = vm.for_stack.back();
 
     // 3. Get the loop variable's current value and increment it by the step.
-    double current_val = to_double(vm.variables[current_loop.variable_name]);
+    double current_val = to_double(get_variable(vm, current_loop.variable_name));
     current_val += current_loop.step_value;
-    vm.variables[current_loop.variable_name] = current_val;
+    set_variable(vm, current_loop.variable_name, current_val);
+    //vm.variables[current_loop.variable_name] = current_val;
 
     // 4. Check if the loop is finished.
     bool loop_finished = false;
@@ -723,7 +725,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         frame.return_pcode = vm.pcode;
         // NEW: Save the entire function table of the caller
         frame.previous_function_table_ptr = vm.active_function_table;
-
+        //frame.for_stack_size_on_entry = vm.for_stack.size();
         vm.call_stack.push_back(frame);
 
         // --- CONTEXT SWITCH ---
@@ -753,6 +755,7 @@ void Commands::do_return(NeReLaBasic& vm) {
 
     // Pop the stack and set pcode to the return address.
     auto& frame = vm.call_stack.back();
+    vm.for_stack.resize(frame.for_stack_size_on_entry);
     vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
     vm.pcode = frame.return_pcode;              // Restore program counter
     vm.active_function_table = frame.previous_function_table_ptr;
@@ -769,6 +772,7 @@ void Commands::do_endfunc(NeReLaBasic& vm) {
 
     // Pop the stack and set pcode to the return address.
     auto& frame = vm.call_stack.back();
+    vm.for_stack.resize(frame.for_stack_size_on_entry);
     vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
     vm.pcode = frame.return_pcode;              // Restore program counter
     vm.active_function_table = frame.previous_function_table_ptr;
@@ -816,6 +820,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
         frame.return_p_code_ptr = vm.active_p_code;
         frame.return_pcode = vm.pcode;
         frame.previous_function_table_ptr = vm.active_function_table;
+        frame.for_stack_size_on_entry = vm.for_stack.size();
         for (size_t i = 0; i < proc_info.parameter_names.size(); ++i) {
             if (i < args.size()) frame.local_variables[proc_info.parameter_names[i]] = args[i];
         }
@@ -840,6 +845,7 @@ void Commands::do_endsub(NeReLaBasic& vm) {
     // For a procedure, there is no return value to set.
     // We just pop the stack and set pcode to the return address.
     auto& frame = vm.call_stack.back();
+    vm.for_stack.resize(frame.for_stack_size_on_entry);
     vm.active_p_code = frame.return_p_code_ptr; // Restore context
     vm.pcode = frame.return_pcode;              // Restore PC
     vm.active_function_table = frame.previous_function_table_ptr;
