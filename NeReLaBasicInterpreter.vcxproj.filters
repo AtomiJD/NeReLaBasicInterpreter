@@ -72,5 +72,6 @@
   <ItemGroup>
     <None Include="lall.bas" />
     <None Include="loop.bas" />
+    <None Include="README.md" />
   </ItemGroup>
 </Project>

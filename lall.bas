@@ -1,34 +1,63 @@
-' Traditional Functional/Procedural Approach for jdBasic
-' ----------------------------------------------------
+' --- Recursion and Higher-Order Functions in jdBasic ---
 
-PRINT "--- Functional Style ---"
+' ===============================================
+PRINT "--- Recursion Demo: Factorial ---"
+' A recursive function calls itself to solve a problem.
+' ===============================================
 
-' A reusable function to test if a single number N is prime.
-FUNC IS_PRIME(N)
-    ' Numbers less than 2 are not prime.
-    Ret = FALSE
-    IF N < 2 THEN RETURN FALSE
-    ' 2 is the only even prime.
-    IF N = 2 THEN RETURN TRUE
-    ' All other even numbers are not prime.
-    IF N MOD 2 = 0 THEN RETURN FALSE
+FUNC FACTORIAL(N)
+    ' The base case is essential to stop the recursion.
+    IF N <= 1 THEN RETURN 1
 
-    ' Check for odd divisors from 3 up to the square root of N.
-    LIMIT = SQR(N)
-    FOR D = 3 TO LIMIT STEP 2
-        IF N MOD D = 0 THEN
-            Ret = FALSE
-        ENDIF
-    NEXT D
-    ' If the loop finishes, no divisors were found. It's prime.
-    RETURN TRUE
+    ' The recursive step: call itself with a smaller problem.
+    RETURN N * FACTORIAL(N - 1)
 ENDFUNC
 
-' Main loop: Test every number from 1 to 100 using our function.
-PRINT "Primes up to 100:"
-FOR I = 1 TO 100
-    IF IS_PRIME(I) THEN
-        PRINT I; " ";
-    ENDIF
-NEXT I
+PRINT "Factorial of 6 is:"; FACTORIAL(6)
 PRINT ""
+
+
+' =========================================================
+PRINT "--- Higher-Order Function Demo: MAP ---"
+' A higher-order function takes another function as an argument.
+' =========================================================
+
+' A simple function we can pass to MAP.
+FUNC SQUARE_IT(X)
+    RETURN X * X
+ENDFUNC
+
+' Another simple function.
+FUNC ADD_ONE(X)
+    RETURN X + 1
+ENDFUNC
+
+' The MAP function. It takes a function reference (FN@) and an
+' array (ARR), and applies FN to every element of ARR.
+FUNC MAP(FN, ARR)
+    ' Create a copy of the array to hold the results.
+    RESULT_ARR = ARR
+
+    FOR I = 0 TO LEN(ARR) - 1
+        ' Get one element from the array.
+        ELEMENT = ARR[I]
+        ' Call the passed-in function with the element.
+        NEW_VALUE = FN(ELEMENT)
+        ' Store the new value back in our result array.
+        RESULT_ARR[I] = NEW_VALUE
+    NEXT I
+
+    RETURN RESULT_ARR
+ENDFUNC
+
+' --- Now, let's use our MAP function! ---
+V = IOTA(5)
+PRINT "Original Vector V: "; V
+
+' Pass the SQUARE_IT function to MAP
+SQUARED_V = MAP(SQUARE_IT@, V)
+PRINT "After MAP(SQUARE_IT@, V): "; SQUARED_V
+
+' Pass the ADD_ONE function to MAP
+ADDED_V = MAP(ADD_ONE@, V)
+PRINT "After MAP(ADD_ONE@, V):  "; ADDED_V
