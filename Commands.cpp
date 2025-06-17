@@ -931,7 +931,6 @@ void Commands::do_run(NeReLaBasic& vm) {
 
     // Clear variables and prepare for a clean run
     vm.variables.clear();
-    //vm.arrays.clear();
     vm.call_stack.clear();
     vm.for_stack.clear();
     Error::clear();

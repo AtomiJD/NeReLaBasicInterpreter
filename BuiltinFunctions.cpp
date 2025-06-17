@@ -3,6 +3,7 @@
 #include "BuiltinFunctions.hpp"
 #include "TextIO.hpp"
 #include "Error.hpp"
+#include "Types.hpp"
 #include <chrono>
 #include <cmath> // For sin, cos, etc.
 #include <conio.h>
@@ -10,10 +11,12 @@
 #include <string>       // For std::string, std::to_string
 #include <vector>       // For std::vector
 #include <filesystem>   
+#include <fstream>
 #include <iostream>     
 #include <regex>
 #include <iomanip> 
 #include <sstream>
+#include <iostream>
 
 namespace fs = std::filesystem;
 
@@ -272,11 +275,42 @@ BasicValue builtin_str_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     return to_string(args[0]);
 }
 
+// SPLIT(source_string$, delimiter_string$) -> array
+// Splits a string into an array of substrings based on a delimiter.
+BasicValue builtin_split(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+
+    std::string source = to_string(args[0]);
+    std::string delimiter = to_string(args[1]);
+
+    if (delimiter.empty()) {
+        Error::set(1, vm.runtime_current_line); // Cannot split by empty delimiter
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    size_t start = 0;
+    size_t end = source.find(delimiter);
+
+    while (end != std::string::npos) {
+        result_ptr->data.push_back(source.substr(start, end - start));
+        start = end + delimiter.length();
+        end = source.find(delimiter, start);
+    }
+    // Add the last token
+    result_ptr->data.push_back(source.substr(start, end));
+
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
+
 // --- Vector and Matrx functions
 
-// In BuiltinFunctions.cpp, add these new functions
-
-// --- NEW: Array Reduction Functions ---
+// --- Array Reduction Functions ---
 
 // Helper macro to reduce boilerplate for numeric reduction functions
 #define NUMERIC_REDUCTION_BOILERPLATE(function_name, error_code_on_mismatch) \
@@ -473,6 +507,49 @@ BasicValue builtin_reverse(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     }
 
     return new_array_ptr;
+}
+
+// SLICE(matrix, dimension, index) -> vector
+// Extracts a slice (row or column) from a 2D matrix.
+BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line); return {}; }
+
+    const auto& matrix_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    int dimension = static_cast<int>(to_double(args[1]));
+    int index = static_cast<int>(to_double(args[2]));
+
+    if (!matrix_ptr || matrix_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line); // Must be a 2D matrix
+        return {};
+    }
+
+    size_t rows = matrix_ptr->shape[0];
+    size_t cols = matrix_ptr->shape[1];
+    auto result_ptr = std::make_shared<Array>();
+
+    if (dimension == 0) { // Slice a row
+        if (index < 0 || (size_t)index >= rows) { Error::set(10, vm.runtime_current_line); return {}; } // Index out of bounds
+
+        result_ptr->shape = { cols };
+        size_t start_pos = index * cols;
+        result_ptr->data.assign(matrix_ptr->data.begin() + start_pos, matrix_ptr->data.begin() + start_pos + cols);
+    }
+    else if (dimension == 1) { // Slice a column
+        if (index < 0 || (size_t)index >= cols) { Error::set(10, vm.runtime_current_line); return {}; } // Index out of bounds
+
+        result_ptr->shape = { rows };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            result_ptr->data.push_back(matrix_ptr->data[r * cols + index]);
+        }
+    }
+    else {
+        Error::set(1, vm.runtime_current_line); // Invalid dimension
+        return {};
+    }
+
+    return result_ptr;
 }
 
 // TRANSPOSE(matrix) -> matrix
@@ -1062,6 +1139,111 @@ BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
+// --- High-Performance File I/O Functions ---
+
+// TXTREADER$(filename$) -> string$
+// Reads the entire content of a text file into a single string.
+BasicValue builtin_txtreader_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return std::string("");
+    }
+    std::string filename = to_string(args[0]);
+    std::ifstream infile(filename);
+
+    if (!infile) {
+        Error::set(6, vm.runtime_current_line); // File not found
+        return std::string("");
+    }
+
+    // Read the whole file into a stringstream buffer, then into a string.
+    std::stringstream buffer;
+    buffer << infile.rdbuf();
+    return buffer.str();
+}
+
+
+// CSVREADER(filename$, [delimiter$], [has_header_bool]) -> array
+// Reads a delimited file (like CSV) into a 2D array of numbers.
+BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty() || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+
+    // --- 1. Parse Arguments ---
+    std::string filename = to_string(args[0]);
+    char delimiter = ',';
+    bool has_header = false;
+
+    if (args.size() > 1) {
+        std::string delim_str = to_string(args[1]);
+        if (!delim_str.empty()) {
+            delimiter = delim_str[0];
+        }
+    }
+    if (args.size() > 2) {
+        has_header = to_bool(args[2]);
+    }
+
+    // --- 2. Open File ---
+    std::ifstream infile(filename);
+    if (!infile) {
+        Error::set(6, vm.runtime_current_line); // File not found
+        return {};
+    }
+
+    // --- 3. Read and Parse ---
+    std::vector<BasicValue> flat_data;
+    size_t rows = 0;
+    size_t cols = 0;
+    std::string line;
+
+    // Handle header row if specified
+    if (has_header && std::getline(infile, line)) {
+        // Just consume the line and do nothing with it.
+    }
+
+    // Loop through the rest of the file
+    while (std::getline(infile, line)) {
+        rows++;
+        std::stringstream line_stream(line);
+        std::string cell;
+        size_t current_cols = 0;
+
+        while (std::getline(line_stream, cell, delimiter)) {
+            current_cols++;
+            try {
+                // Try to convert each cell to a number.
+                flat_data.push_back(std::stod(cell));
+            }
+            catch (const std::invalid_argument&) {
+                // If conversion fails, store 0.0, a common practice.
+                flat_data.push_back(0.0);
+            }
+        }
+
+        // --- 4. Determine Shape and Validate ---
+        if (rows == 1) {
+            // This is the first data row, so it determines the number of columns.
+            cols = current_cols;
+        }
+        else {
+            // For all subsequent rows, verify they have the correct number of columns.
+            if (current_cols != cols) {
+                Error::set(15, vm.runtime_current_line); // Type Mismatch (or a new "Invalid file format" error)
+                return {};
+            }
+        }
+    }
+
+    // --- 5. Create and Return the Array ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = { rows, cols };
+    result_ptr->data = flat_data;
+    return result_ptr;
+}
+
 
 // --- GUI and Graphic and more ---
 // Handles: COLOR fg, bg
@@ -1109,6 +1291,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("INKEY$", 0, builtin_inkey);
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
+    register_func("SPLIT", 2, builtin_split);
     
     // --- Register Math Functions ---
     register_func("SIN", 1, builtin_sin);
@@ -1133,6 +1316,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TAKE", 2, builtin_take);
     register_func("DROP", 2, builtin_drop);
     register_func("GRADE", 1, builtin_grade);
+    register_func("SLICE", 3, builtin_slice);
 
 
     // --- Register Time Functions ---
@@ -1166,6 +1350,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("COLOR", 2, builtin_color);
     register_proc("MKDIR", 1, builtin_mkdir); 
     register_proc("KILL", 1, builtin_kill);   
+    register_func("CSVREADER", -1, builtin_csvreader); // -1 for optional args
+    register_func("TXTREADER$", 1, builtin_txtreader_str);
 
 }
 
