@@ -114,6 +114,7 @@ public:
     NeReLaBasic(); // Constructor
     void start();  // The main REPL
     void execute(const std::vector<uint8_t>& code_to_run);
+    bool loadSourceFromFile(const std::string& filename);
 
 
     // --- New Declarations for Expression Parsing ---

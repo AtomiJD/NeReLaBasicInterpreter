@@ -16,6 +16,8 @@
 #include <algorithm> // for std::transform, std::find_if
 #include <cctype>    // for std::isspace, std::toupper
 
+const std::string NERELA_VERSION = "0.7";
+
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
 namespace StringUtils {
@@ -87,11 +89,24 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     srand(static_cast<unsigned int>(time(nullptr)));
 }
 
+bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
+    std::ifstream infile(filename);
+    if (!infile) {
+        TextIO::print("Error: File not found -> " + filename + "\n");
+        return false;
+    }
+    TextIO::print("LOADING " + filename + "\n");
+    std::stringstream buffer;
+    buffer << infile.rdbuf();
+    source_code = buffer.str();
+    return true;
+}
+
 void NeReLaBasic::init_screen() {
     TextIO::setColor(fgcolor, bgcolor);
     TextIO::clearScreen();
-    TextIO::print("NeReLa Basic v 0.6\n");
-    TextIO::print("(c) 2024\n\n");
+    TextIO::print("NeReLa Basic v " + NERELA_VERSION + "\n");
+    TextIO::print("(c) 2025\n\n");
 }
 
 void NeReLaBasic::init_system() {
@@ -481,6 +496,9 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
                     if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                 }
             }
+            else {
+                Error::set(1, current_source_line);
+            }
 
             info.arity = info.parameter_names.size();
             info.start_pcode = out_p_code.size() + 3; // +3 for SUB token and 2-byte address
@@ -748,7 +766,7 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const st
     if (!is_compiling_module) {
         for (const auto& mod_name : modules_to_import) {
             if (compiled_modules.count(mod_name)) continue;
-            std::string filename = mod_name + ".bas";
+            std::string filename = mod_name + ".jdb";
             std::ifstream mod_file(filename);
             if (!mod_file) { Error::set(6, 0); TextIO::print("? Error: Module file not found: " + filename + "\n"); return 1; }
             std::stringstream buffer;

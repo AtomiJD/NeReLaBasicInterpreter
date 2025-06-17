@@ -75,6 +75,19 @@ DIM BLOCK_C$ AS STRING
 
 DIM ALIEN_T[12]
 
+ALIEN_T[0] = "▗▇▇▖"
+ALIEN_T[1] = "▞  ▚"
+ALIEN_T[2] = "▗▇▇▖"
+ALIEN_T[3] = "▚  ▞"
+ALIEN_T[4] = "▗▇▇▖"
+ALIEN_T[5] = " ▚▞ "
+ALIEN_T[6] = "▗▇▇▖"
+ALIEN_T[7] = " ▞▚"
+ALIEN_T[8] = "▛▀▀▜"
+ALIEN_T[9] = "▚▅▅▞"
+ALIEN_T[10] = "▛▀▀▜"
+ALIEN_T[11] = "▚  ▞"
+
 ALIEN_A1$ = "▗▇▇▖▞  ▚"
 ALIEN_A2$ = "▗▇▇▖▚  ▞"
 ALIEN_B1$ = "▗▇▇▖ ▚▞ "
@@ -245,6 +258,8 @@ SUB UPDATE_GAME()
         NEXT I
     ENDIF
 
+    
+
     REM --- ALIEN LOGIC (FIRE, GAME OVER CHECK) ---
     ALIVE_COUNT = 0
     FOR I = 0 TO MAX_ALIENS - 1
@@ -261,7 +276,6 @@ SUB UPDATE_GAME()
     NEXT I
 
     IF AMFIRE = 0 AND CANDIDATE > -1 THEN 
-	stop
        FIRE_ALIEN_MISSILE CANDIDATE
     ENDIF
     IF ALIVE_COUNT = 0 AND GAMEOVER = 0 THEN 
@@ -319,6 +333,13 @@ func part(sprite$, k)
   return r$
 endfunc
 
+sub print_alien(i, f, t)
+    LOCATE AY[I], AX[I]
+    print ALIEN_T[t*4+f*2]
+    LOCATE AY[I]+1, AX[I]
+    print ALIEN_T[t*4+1+f*2]
+endsub
+
 SUB RENDER_SCREEN()
     CLS
     COLOR 7, 0
@@ -334,8 +355,6 @@ SUB RENDER_SCREEN()
     REM -- DRAW ALIENS --
     FOR I = 0 TO MAX_ALIENS - 1
         IF AV[I] = 1 THEN
-	   FOR j = 0 TO 1
-            LOCATE AY[I]+J, AX[I]
             TYPE = AT[I]
             IF TYPE = 0 THEN 
                COLOR 1, 0 ' Red
@@ -346,28 +365,7 @@ SUB RENDER_SCREEN()
             IF TYPE = 2 THEN 
                COLOR 6, 0 ' Cyan
             ENDIF
-            IF FRAME = 0 THEN
-                IF TYPE = 0 THEN 
-		   PRINT part(ALIEN_A1$,j);
-	        ENDIF
-                IF TYPE = 1 THEN 
-                   PRINT part(ALIEN_B1$,j);
-	        ENDIF
-                IF TYPE = 2 THEN 
-                   PRINT part(ALIEN_C1$,j);
-	        ENDIF
-            ELSE
-                IF TYPE = 0 THEN 
-                   PRINT part(ALIEN_A2$,j);
-		ENDIF
-                IF TYPE = 1 THEN 
-                   PRINT part(ALIEN_B2$,j);
-		ENDIF
-                IF TYPE = 2 THEN 
-                   PRINT part(ALIEN_C2$,j);
-		ENDIF
-            ENDIF
-	   NEXT J
+	    PRINT_ALIEN I, FRAME, TYPE
         ENDIF
     NEXT I
     
@@ -463,6 +461,7 @@ MAIN_LOOP:
         SFRAME = SFRAME + 1
         IF SFRAME > SPEED THEN
             UPDATE_GAME
+	    RENDER_SCREEN
             SFRAME = 0
 	    FRAME = FRAME + 1
 	    IF FRAME > 1 then
@@ -471,7 +470,7 @@ MAIN_LOOP:
         ENDIF
     ENDIF
 
-    RENDER_SCREEN
+    
     
     SLEEP 20
     GOTO MAIN_LOOP

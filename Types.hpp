@@ -50,6 +50,9 @@ inline double to_double(const BasicValue& val) {
     if (std::holds_alternative<double>(val)) {
         return std::get<double>(val);
     }
+    if (std::holds_alternative<int>(val)) { 
+        return static_cast<double>(std::get<int>(val));
+    }
     if (std::holds_alternative<bool>(val)) {
         return std::get<bool>(val) ? 1.0 : 0.0;
     }
