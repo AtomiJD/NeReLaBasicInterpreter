@@ -1,0 +1,9 @@
+V = IOTA(7)
+Print V
+M = RESHAPE(V, [2, 4])
+Print M
+
+PRINT REVERSE([10, 20, 30])
+
+T = TRANSPOSE([[1,2],[3,4]])
+PRINT T

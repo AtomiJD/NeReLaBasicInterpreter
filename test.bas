@@ -77,20 +77,17 @@ for i = 0 to 19
   print "Zahl #",i, " ist: ", a[i]
 next i
 
-DIM my_numbers[10]
-DIM my_strings$[5]
-
 my_numbers = [10, 20, 30, 40, 50]
 my_strings$ = ["alpha", "beta", "gamma"]
 
-PRINT "--- Numbers ---"
-FOR i = 0 TO 9
-    PRINT my_numbers[i]
+PRINT "--- Strings ---"
+FOR i = 0 TO len(my_strings$)-1
+    PRINT my_strings$[i]
 NEXT i
 
-PRINT "--- Strings ---"
-FOR i = 0 TO 4
-    PRINT my_strings$[i]
+PRINT "--- Numbers ---"
+FOR i = 0 TO len(my_numbers)-1
+    PRINT my_numbers[i]
 NEXT i
 
 print "done"
@@ -245,7 +242,6 @@ print "------------------------"
 print "Map and Filter"
 print
 
-Dim s_map[20]
 Dim o_map[20]
 
 s_map = [1,5,8,7,45,66,12]

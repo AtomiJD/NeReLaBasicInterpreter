@@ -66,7 +66,7 @@ std::string wildcard_to_regex(const std::string& wildcard) {
 
 // --- String Functions ---
 
-// LEN(string_expression)
+// LEN(string_expression) or LEN(array_variable)
 BasicValue builtin_len(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
         Error::set(8, 0); // Wrong number of arguments
@@ -74,15 +74,47 @@ BasicValue builtin_len(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 
     const BasicValue& val = args[0];
-    // Check if the argument is a string that matches an array name
-    if (std::holds_alternative<std::string>(val)) {
-        std::string name = to_upper(std::get<std::string>(val));
-        if (vm.arrays.count(name)) {
-            // It's a reference to an array! Return the array's size.
-            return static_cast<double>(vm.arrays.at(name).size());
+
+    // --- Case 1: The argument is ALREADY an array ---
+    if (std::holds_alternative<std::shared_ptr<Array>>(val)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(val);
+        if (arr_ptr) {
+            // Create a new vector (1D Array) to hold the shape information
+            auto shape_vector_ptr = std::make_shared<Array>();
+            shape_vector_ptr->shape = { arr_ptr->shape.size() };
+            for (size_t dim : arr_ptr->shape) {
+                shape_vector_ptr->data.push_back(static_cast<double>(dim));
+            }
+            return shape_vector_ptr;
+        }
+        else {
+            // This case is for a null array pointer, return 0.
+            return 0.0;
         }
     }
-    // Otherwise, treat it as a normal string and return its length.
+
+    // --- Case 2: The argument is a string that might be a variable name ---
+    if (std::holds_alternative<std::string>(val)) {
+        std::string name = to_upper(std::get<std::string>(val));
+        // Check if a variable with this name exists
+        if (vm.variables.count(name)) {
+            const BasicValue& var_val = vm.variables.at(name);
+            // Check if that variable holds an array
+            if (std::holds_alternative<std::shared_ptr<Array>>(var_val)) {
+                const auto& arr_ptr = std::get<std::shared_ptr<Array>>(var_val);
+                if (arr_ptr) {
+                    auto shape_vector_ptr = std::make_shared<Array>();
+                    shape_vector_ptr->shape = { arr_ptr->shape.size() };
+                    for (size_t dim : arr_ptr->shape) {
+                        shape_vector_ptr->data.push_back(static_cast<double>(dim));
+                    }
+                    return shape_vector_ptr;
+                }
+            }
+        }
+    }
+
+    // --- Case 3: Fallback to original behavior (length of string representation) ---
     return static_cast<double>(to_string(val).length());
 }
 
@@ -238,6 +270,143 @@ BasicValue builtin_str_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     }
     // to_string is already a helper in your project that does this conversion.
     return to_string(args[0]);
+}
+
+// --- Vector and Matrx functions
+
+// IOTA(N) -> vector
+// Generates a vector of numbers from 1 to N.
+BasicValue builtin_iota(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return {}; // Return an empty BasicValue
+    }
+    int count = static_cast<int>(to_double(args[0]));
+    if (count < 0) count = 0;
+
+    auto new_array_ptr = std::make_shared<Array>();
+    new_array_ptr->shape = { (size_t)count };
+    new_array_ptr->data.reserve(count);
+
+    for (int i = 1; i <= count; ++i) {
+        new_array_ptr->data.push_back(static_cast<double>(i));
+    }
+
+    return new_array_ptr;
+}
+
+// RESHAPE(source_array, shape_vector) -> array
+// Creates a new array with a new shape from the data of a source array.
+BasicValue builtin_reshape(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line); // Type Mismatch
+        return {};
+    }
+
+    const auto& source_array_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& shape_vector_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+
+    if (!source_array_ptr || !shape_vector_ptr) return {}; // Null pointers
+
+    // Create the new shape from the shape_vector
+    std::vector<size_t> new_shape;
+    for (const auto& val : shape_vector_ptr->data) {
+        new_shape.push_back(static_cast<size_t>(to_double(val)));
+    }
+
+    auto new_array_ptr = std::make_shared<Array>();
+    new_array_ptr->shape = new_shape;
+    size_t new_total_size = new_array_ptr->size();
+    new_array_ptr->data.reserve(new_total_size);
+
+    // APL's reshape cycles through the source data if needed.
+    if (source_array_ptr->data.empty()) {
+        new_array_ptr->data.assign(new_total_size, 0.0); // Fill with default if source is empty
+    }
+    else {
+        for (size_t i = 0; i < new_total_size; ++i) {
+            new_array_ptr->data.push_back(source_array_ptr->data[i % source_array_ptr->data.size()]);
+        }
+    }
+
+    return new_array_ptr;
+}
+
+// REVERSE(array) -> array
+// Reverses the elements of an array along its last dimension.
+BasicValue builtin_reverse(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line);
+        return {};
+    }
+    const auto& source_array_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!source_array_ptr || source_array_ptr->data.empty()) return source_array_ptr;
+
+    auto new_array_ptr = std::make_shared<Array>();
+    new_array_ptr->shape = source_array_ptr->shape;
+
+    size_t last_dim_size = source_array_ptr->shape.back();
+    size_t num_slices = source_array_ptr->data.size() / last_dim_size;
+
+    for (size_t i = 0; i < num_slices; ++i) {
+        size_t slice_start = i * last_dim_size;
+        // Get a copy of the slice to reverse
+        std::vector<BasicValue> slice(
+            source_array_ptr->data.begin() + slice_start,
+            source_array_ptr->data.begin() + slice_start + last_dim_size
+        );
+        // Reverse it
+        std::reverse(slice.begin(), slice.end());
+        // Insert the reversed slice into the new data
+        new_array_ptr->data.insert(new_array_ptr->data.end(), slice.begin(), slice.end());
+    }
+
+    return new_array_ptr;
+}
+
+// TRANSPOSE(matrix) -> matrix
+// Transposes a 2D matrix.
+BasicValue builtin_transpose(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line);
+        return {};
+    }
+    const auto& source_array_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!source_array_ptr) return source_array_ptr;
+
+    if (source_array_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line); // Or a more specific "Invalid rank for transpose" error
+        return {};
+    }
+
+    size_t rows = source_array_ptr->shape[0];
+    size_t cols = source_array_ptr->shape[1];
+
+    auto new_array_ptr = std::make_shared<Array>();
+    new_array_ptr->shape = { cols, rows }; // New shape is inverted
+    new_array_ptr->data.resize(rows * cols);
+
+    for (size_t r = 0; r < rows; ++r) {
+        for (size_t c = 0; c < cols; ++c) {
+            // New position (c, r) gets data from old position (r, c)
+            new_array_ptr->data[c * rows + r] = source_array_ptr->data[r * cols + c];
+        }
+    }
+
+    return new_array_ptr;
 }
 
 
@@ -661,6 +830,12 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TAN", 1, builtin_tan);
     register_func("SQR", 1, builtin_sqr);
     register_func("RND", 1, builtin_rnd);
+
+    // --- Register APL-style Array Functions ---
+    register_func("IOTA", 1, builtin_iota);
+    register_func("RESHAPE", -1, builtin_reshape);
+    register_func("REVERSE", 1, builtin_reverse);
+    register_func("TRANSPOSE", 1, builtin_transpose);
 
 
     // --- Register Time Functions ---

@@ -99,7 +99,6 @@ public:
     // -- - Symbol Tables for Variables-- -
     std::unordered_map<std::string, BasicValue> variables;
     std::unordered_map<std::string, DataType> variable_types;
-    std::unordered_map<std::string, std::vector<BasicValue>> arrays;
 
     std::unordered_map<std::string, uint16_t> label_addresses;
 
@@ -124,6 +123,7 @@ public:
     BasicValue parse_primary();
     BasicValue parse_unary();
     BasicValue parse_factor();
+    BasicValue parse_array_literal();
     bool compile_module(const std::string& module_name, const std::string& module_source_code);
     uint8_t tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source);
     void statement();

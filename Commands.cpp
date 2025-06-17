@@ -12,13 +12,51 @@
 #include "Types.hpp"
 
 
+namespace { // Use an anonymous namespace to keep this helper local to this file
+    // Forward declaration of the recursive part
+    std::string array_to_string_recursive(
+        const Array& arr,
+        size_t& data_index, // Pass as a reference to be advanced
+        size_t current_dimension
+    );
 
-//// Helper to read a 16-bit word from p_code (little-endian)
-//uint16_t read_word(NeReLaBasic& vm) {
-//    uint8_t lsb = (*vm.active_p_code)[vm.pcode++];
-//    uint8_t msb = (*vm.active_p_code)[vm.pcode++];
-//    return (msb << 8) | lsb;
-//}
+    std::string value_to_string_for_array(const BasicValue& val) {
+        // A specialized to_string to avoid infinite recursion if an array contains itself
+        return std::visit([](auto&& arg) -> std::string {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
+                return "<Array>"; // Don't recursively print nested arrays
+            }
+            else {
+                return to_string(arg); // Use the main to_string for all other types
+            }
+            }, val);
+    }
+
+    std::string array_to_string_recursive(const Array& arr, size_t& data_index, size_t current_dimension) {
+        std::stringstream ss;
+        ss << "[";
+
+        bool is_innermost_vector = (current_dimension == arr.shape.size() - 1);
+
+        for (size_t i = 0; i < arr.shape[current_dimension]; ++i) {
+            if (is_innermost_vector) {
+                if (data_index < arr.data.size()) {
+                    ss << value_to_string_for_array(arr.data[data_index++]);
+                }
+            }
+            else {
+                ss << array_to_string_recursive(arr, data_index, current_dimension + 1);
+            }
+
+            if (i < arr.shape[current_dimension] - 1) {
+                ss << " "; // Separator between elements/sub-arrays
+            }
+        }
+        ss << "]";
+        return ss.str();
+    }
+} // end anonymous namespace
 
 std::string to_upper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -121,10 +159,27 @@ std::string to_string(const BasicValue& val) {
             ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
             return ss.str();
         }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
+            if (!arg) {
+                return "<Null Array>";
+            }
+            if (arg->shape.empty() || arg->data.empty()) {
+                return "[]"; // An empty array
+            }
+            size_t data_idx = 0;
+            return array_to_string_recursive(*arg, data_idx, 0);
+        }
         }, val);
 }
 
 void print_value(const BasicValue& val) {
+    // For arrays, we just want to print their string representation.
+    // For all other types, we can use the existing logic.
+    if (std::holds_alternative<std::shared_ptr<Array>>(val)) {
+        TextIO::print(to_string(val));
+        return;
+    }
+
     std::visit([](auto&& arg) {
         using T = std::decay_t<decltype(arg)>;
         if constexpr (std::is_same_v<T, bool>) {
@@ -207,48 +262,74 @@ void Commands::do_dim(NeReLaBasic& vm) {
     Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
     std::string var_name = to_upper(read_string(vm));
 
-    //// Expect an opening bracket '['
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-    
-    if (next_token == Tokens::ID::C_LEFTBRACKET) {
-        vm.pcode++; // Consume left bracket
-        BasicValue size_val = vm.evaluate_expression();
-        if (Error::get() != 0) return;
-        int size = static_cast<int>(to_double(size_val));
 
-        // Expect a closing bracket ']'
+    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+        // --- Case 1: ARRAY DECLARATION (e.g., DIM A[2, 3]) ---
+        vm.pcode++; // Consume '['
+
+        std::vector<size_t> dimensions;
+        while (true) {
+            BasicValue size_val = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+
+            double dim_double = to_double(size_val);
+            if (dim_double < 0) {
+                Error::set(10, vm.runtime_current_line); // Bad subscript
+                return;
+            }
+            dimensions.push_back(static_cast<size_t>(dim_double));
+
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (separator == Tokens::ID::C_COMMA) {
+                vm.pcode++;
+            }
+            else if (separator == Tokens::ID::C_RIGHTBRACKET) {
+                break;
+            }
+            else {
+                Error::set(1, vm.runtime_current_line); // Syntax error: Expected , or ]
+                return;
+            }
+        }
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
             Error::set(1, vm.runtime_current_line); return;
         }
 
+        // --- Create the Array on the heap using std::make_shared ---
+        auto new_array_ptr = std::make_shared<Array>();
+        new_array_ptr->shape = dimensions;
+
+        size_t total_size = new_array_ptr->size();
+
         bool is_string_array = (var_name.back() == '$');
         BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
-        vm.arrays[var_name] = std::vector<BasicValue>(size + 1, default_val);
+
+        new_array_ptr->data.assign(total_size, default_val);
+
+        // Store the shared_ptr in the BasicValue variant
+        set_variable(vm, var_name, new_array_ptr);
     }
-    else 
+    else
     {
         // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
-        // We expect the 'AS' keyword here.
+        // This logic remains unchanged.
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
-            Error::set(1, vm.runtime_current_line); // Syntax Error: Expected AS
-            return;
+            Error::set(1, vm.runtime_current_line); return;
         }
 
-        // The next part is the type name (e.g., INTEGER, DATE). The tokenizer
-        // will have parsed this as a generic identifier (VARIANT or INT).
         Tokens::ID type_name_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
         if (type_name_token != Tokens::ID::VARIANT && type_name_token != Tokens::ID::INT) {
-            Error::set(1, vm.runtime_current_line); // Syntax Error: Expected a type name
-            return;
+            Error::set(1, vm.runtime_current_line); return;
         }
 
         std::string type_name = to_upper(read_string(vm));
         DataType declared_type;
 
-        // Map the type name string to our DataType enum.
-        if (type_name == "INTEGER" ) {
+        if (type_name == "INTEGER") {
             declared_type = DataType::INTEGER;
-        } else if (type_name == "DOUBLE") {
+        }
+        else if (type_name == "DOUBLE") {
             declared_type = DataType::DOUBLE;
         }
         else if (type_name == "STRING") {
@@ -265,10 +346,8 @@ void Commands::do_dim(NeReLaBasic& vm) {
             return;
         }
 
-        // Store the type information for this variable in the VM.
         vm.variable_types[var_name] = declared_type;
 
-        // Initialize the variable with a default value appropriate for its type.
         BasicValue default_value;
         switch (declared_type) {
         case DataType::INTEGER:  default_value = 0; break;
@@ -391,126 +470,62 @@ void Commands::do_let(NeReLaBasic& vm) {
     vm.pcode++;
     std::string name = to_upper(read_string(vm));
 
-    // Check if this is an array assignment, e.g., A[i] = ...
+    // --- Case 1: ARRAY ELEMENT ASSIGNMENT (e.g., A[i, j] = ...) ---
     if (var_type_token == Tokens::ID::ARRAY_ACCESS) {
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTBRACKET) {
             Error::set(1, vm.runtime_current_line); return;
         }
-        int index = static_cast<int>(to_double(vm.evaluate_expression()));
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-            Error::set(1, vm.runtime_current_line); return;
+
+        // Parse multiple comma-separated indices
+        std::vector<size_t> indices;
+        while (true) {
+            BasicValue index_val = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            indices.push_back(static_cast<size_t>(to_double(index_val)));
+
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+            vm.pcode++;
         }
+        vm.pcode++; // Consume ']'
+
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
         }
         BasicValue value_to_assign = vm.evaluate_expression();
         if (Error::get() != 0) return;
 
-        std::string actual_array_name = name;
-        // Check if `name` (e.g., "OUT") is a variable that holds an array name.
-        BasicValue& var_lookup = get_variable(vm, name);
-        if (std::holds_alternative<std::string>(var_lookup)) {
-            // It is! The variable holds the name of the *real* array.
-            actual_array_name = to_upper(std::get<std::string>(var_lookup));
+        // Get the array, check its type, and perform assignment
+        BasicValue& array_var = get_variable(vm, name);
+        if (!std::holds_alternative<std::shared_ptr<Array>>(array_var)) {
+            Error::set(15, vm.runtime_current_line); // Type Mismatch
+            return;
         }
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(array_var);
+        if (!arr_ptr) { Error::set(15, vm.runtime_current_line); return; }
 
-        if (vm.arrays.count(actual_array_name) && index >= 0 && index < vm.arrays.at(actual_array_name).size()) {
-            vm.arrays.at(actual_array_name)[index] = value_to_assign;
+        try {
+            size_t flat_index = arr_ptr->get_flat_index(indices);
+            arr_ptr->data[flat_index] = value_to_assign;
         }
-        else {
+        catch (const std::exception&) {
             Error::set(10, vm.runtime_current_line); // Bad subscript
         }
     }
-    else { // It's a simple variable assignment, e.g., A = ...
+    // --- Case 2: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
+    else {
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
         }
-        Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-        if (next_token == Tokens::ID::C_LEFTBRACKET) {
-            // It IS an array literal assignment!
-            vm.pcode++; // Consume the '['
-
-            // Check if the target variable is actually an array
-            if (vm.arrays.find(name) == vm.arrays.end()) {
-                Error::set(15, vm.runtime_current_line); // Type Mismatch error
-                return;
-            }
-
-            std::vector<BasicValue> values;
-            // Loop until we find the closing bracket ']'
-            while (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTBRACKET) {
-                values.push_back(vm.evaluate_expression());
-                if (Error::get() != 0) return;
-
-                // After an element, we expect either a comma or the closing bracket
-                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-                if (separator == Tokens::ID::C_COMMA) {
-                    vm.pcode++; // Consume comma and loop to the next element
-                }
-                else if (separator != Tokens::ID::C_RIGHTBRACKET) {
-                    Error::set(1, vm.runtime_current_line); // Syntax Error
-                    return;
-                }
-            }
-            vm.pcode++; // Consume the ']'
-
-            // Copy the parsed values into the target array, up to its capacity
-            for (size_t i = 0; i < vm.arrays.at(name).size(); ++i) {
-                if (i < values.size()) {
-                    vm.arrays.at(name)[i] = values[i];
-                }
-                else {
-                    // If the literal has fewer items than the array size, fill the rest with defaults
-                    bool is_string_array = (name.back() == '$');
-                    vm.arrays.at(name)[i] = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
-                }
-            }
-
-        }
-        else {
-            // It's a normal variable assignment, e.g., a = 5
-            BasicValue value_to_assign = vm.evaluate_expression();
-
-            // --- Type Checking Logic ---
-            if (vm.variable_types.count(name)) {
-                DataType expected_type = vm.variable_types.at(name);
-                bool type_ok = false;
-                switch (expected_type) {
-                case DataType::INTEGER:
-                    // Allow assigning numbers or booleans to a int variable.
-                    if (std::holds_alternative<double>(value_to_assign) || std::holds_alternative<int>(value_to_assign) || std::holds_alternative<bool>(value_to_assign)) type_ok = true;
-                    break;
-                case DataType::DOUBLE:
-                    // Allow assigning numbers or booleans to a double variable.
-                    if (std::holds_alternative<double>(value_to_assign) || std::holds_alternative<bool>(value_to_assign)) type_ok = true;
-                    break;
-                case DataType::STRING:
-                    if (std::holds_alternative<std::string>(value_to_assign)) type_ok = true;
-                    break;
-                case DataType::BOOL:
-                    // Allow assigning booleans or numbers to a boolean variable.
-                    if (std::holds_alternative<bool>(value_to_assign) || std::holds_alternative<double>(value_to_assign)) type_ok = true;
-                    break;
-                case DataType::DATETIME:
-                    if (std::holds_alternative<DateTime>(value_to_assign)) type_ok = true;
-                    break;
-                case DataType::DEFAULT:
-                    type_ok = true; // No type was declared, so no checking needed.
-                    break;
-                }
-                if (!type_ok) {
-                    Error::set(15, vm.runtime_current_line); // Type Mismatch error
-                    return;
-                }
-            }
-
-            if (Error::get() != 0) return;
-            set_variable(vm, name, value_to_assign);
-        }
+        // The universal evaluate_expression now handles all cases,
+        // including array literals, thanks to our changes in parse_primary.
+        BasicValue value_to_assign = vm.evaluate_expression();
+        if (Error::get() != 0) return;
+        set_variable(vm, name, value_to_assign);
     }
 }
-
 void Commands::do_goto(NeReLaBasic& vm) {
     // The label name was stored as a string in the bytecode after the GOTO token.
     std::string label_name = read_string(vm);
@@ -910,7 +925,7 @@ void Commands::do_run(NeReLaBasic& vm) {
 
     // Clear variables and prepare for a clean run
     vm.variables.clear();
-    vm.arrays.clear();
+    //vm.arrays.clear();
     vm.call_stack.clear();
     vm.for_stack.clear();
     Error::clear();

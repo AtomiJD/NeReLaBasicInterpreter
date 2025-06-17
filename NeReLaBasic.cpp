@@ -1104,7 +1104,59 @@ void NeReLaBasic::statement() {
     }
 }
 
-// In NeReLaBasic.cpp, add these FIVE new functions.
+// --- CLASS MEMBER FUNCTION FOR PARSING ARRAY LITERALS ---
+BasicValue NeReLaBasic::parse_array_literal() {
+    // We expect the current token to be '['
+    if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTBRACKET) {
+        Error::set(1, runtime_current_line); // Should not happen if called correctly
+        return {};
+    }
+
+    std::vector<BasicValue> elements;
+    // Loop until we find the closing bracket ']'
+    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+        while (true) {
+            // Recursively call evaluate_expression, which can now handle nested literals
+            elements.push_back(evaluate_expression());
+            if (Error::get() != 0) return {};
+
+            Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; }
+            pcode++;
+        }
+    }
+    pcode++; // Consume ']'
+
+    // --- Now, construct the Array object from the parsed elements ---
+    auto new_array_ptr = std::make_shared<Array>();
+    if (elements.empty()) {
+        new_array_ptr->shape = { 0 };
+        return new_array_ptr;
+    }
+
+    if (std::holds_alternative<std::shared_ptr<Array>>(elements[0])) {
+        const auto& first_sub_array_ptr = std::get<std::shared_ptr<Array>>(elements[0]);
+        new_array_ptr->shape.push_back(elements.size());
+        if (first_sub_array_ptr) {
+            for (size_t dim : first_sub_array_ptr->shape) {
+                new_array_ptr->shape.push_back(dim);
+            }
+        }
+
+        for (const auto& el : elements) {
+            if (!std::holds_alternative<std::shared_ptr<Array>>(el)) { Error::set(15, runtime_current_line); return{}; }
+            const auto& sub_array_ptr = std::get<std::shared_ptr<Array>>(el);
+            if (!sub_array_ptr || sub_array_ptr->shape != first_sub_array_ptr->shape) { Error::set(15, runtime_current_line); return{}; }
+            new_array_ptr->data.insert(new_array_ptr->data.end(), sub_array_ptr->data.begin(), sub_array_ptr->data.end());
+        }
+    }
+    else {
+        new_array_ptr->shape = { elements.size() };
+        new_array_ptr->data = elements;
+    }
+    return new_array_ptr;
+}
 
 // Level 5: Handles highest-precedence items
 BasicValue NeReLaBasic::parse_primary() {
@@ -1154,42 +1206,49 @@ BasicValue NeReLaBasic::parse_primary() {
     }
     if (token == Tokens::ID::ARRAY_ACCESS) {
         pcode++; // Consume ARRAY_ACCESS token
-        std::string base_name = to_upper(read_string(*this));
+        std::string var_name = to_upper(read_string(*this));
 
         if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTBRACKET) {
-            Error::set(1, runtime_current_line); // Syntax Error: expected '['
+            Error::set(1, runtime_current_line); return false;
+        }
+
+        // --- Multi-dimensional Index Parsing ---
+        std::vector<size_t> indices;
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+            while (true) {
+                BasicValue index_val = evaluate_expression();
+                if (Error::get() != 0) return false;
+                indices.push_back(static_cast<size_t>(to_double(index_val)));
+
+                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
+                pcode++;
+            }
+        }
+
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+            Error::set(1, runtime_current_line); return false;
+        }
+
+        BasicValue& array_var = get_variable(*this, var_name);
+        if (!std::holds_alternative<std::shared_ptr<Array>>(array_var)) {
+            Error::set(15, runtime_current_line); return false; // Type Mismatch
+        }
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(array_var);
+        if (!arr_ptr) { Error::set(15, runtime_current_line); return false; }
+
+        try {
+            size_t flat_index = arr_ptr->get_flat_index(indices);
+            return arr_ptr->data[flat_index];
+        }
+        catch (const std::exception&) {
+            Error::set(10, runtime_current_line); // Bad subscript
             return false;
         }
-
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTBRACKET) {
-            // Case: array[], this is an array reference.
-            pcode++; // Consume ']'
-            // Return the array's name as a string value.
-            return base_name;
-        }
-        else {
-            // Case: array[index], this is an element access.
-            BasicValue index_val = evaluate_expression();
-            if (Error::get() != 0) return false;
-            int index = static_cast<int>(to_double(index_val));
-
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-                Error::set(1, runtime_current_line); return false;
-            }
-
-            // --- The existing indirection logic for reading a value ---
-            std::string actual_array_name = base_name;
-            BasicValue& var_lookup = get_variable(*this, base_name);
-            if (std::holds_alternative<std::string>(var_lookup)) {
-                actual_array_name = to_upper(std::get<std::string>(var_lookup));
-            }
-
-            if (arrays.find(actual_array_name) == arrays.end() || index < 0 || index >= arrays.at(actual_array_name).size()) {
-                Error::set(10, runtime_current_line); // Use error 10 for consistency (Array out of bounds)
-                return false;
-            }
-            return arrays.at(actual_array_name)[index];
-        }
+    }
+    if (token == Tokens::ID::C_LEFTBRACKET) {
+        return parse_array_literal();
     }
 
     if (token == Tokens::ID::C_LEFTPAREN) {
