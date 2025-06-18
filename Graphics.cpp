@@ -1,100 +1,116 @@
 #include "Graphics.hpp"
-#include <windows.h> // Required for all GDI and console functions
-#include <cstring>
-#include <cstdio>
-#include <tchar.h>
-#include <conio.h>
-#include <strsafe.h>
+#include "TextIO.hpp"
 
-namespace {
-    // We'll store the console handle and device context as static variables
-    // so we don't have to retrieve them for every single drawing operation.
-    HWND console_window = nullptr;
-    HDC device_context = nullptr;
+Graphics::Graphics() {}
 
-    // A classic 16-color palette, similar to QBasic.
-    // This array maps a simple color index (0-15) to a GDI COLORREF value.
-    COLORREF palette[16] = {
-        RGB(0, 0, 0),       // 0: Black
-        RGB(0, 0, 128),     // 1: Blue
-        RGB(0, 128, 0),     // 2: Green
-        RGB(0, 128, 128),   // 3: Cyan
-        RGB(128, 0, 0),     // 4: Red
-        RGB(128, 0, 128),   // 5: Magenta
-        RGB(128, 128, 0),   // 6: Brown
-        RGB(192, 192, 192), // 7: Light Gray
-        RGB(128, 128, 128), // 8: Dark Gray
-        RGB(0, 0, 255),     // 9: Light Blue
-        RGB(0, 255, 0),     // 10: Light Green
-        RGB(0, 255, 255),   // 11: Light Cyan
-        RGB(255, 0, 0),     // 12: Light Red
-        RGB(255, 0, 255),   // 13: Light Magenta
-        RGB(255, 255, 0),   // 14: Yellow
-        RGB(255, 255, 255)  // 15: White
-    };
+Graphics::~Graphics() {
+    shutdown();
 }
 
-
-void Graphics::init() {
-    console_window = GetConsoleWindow();
-}
-
-void Graphics::pset(int x, int y, int color_index) {
-    if (console_window == nullptr || color_index < 0 || color_index > 15) {
-        return;
+bool Graphics::init(const std::string& title, int width, int height) {
+    if (is_initialized) {
+        shutdown(); // Close existing window if any
     }
-    // Get the device context (the "canvas") right before drawing.
-    HDC device_context = GetDC(console_window);
-    if (device_context == nullptr) return;
 
-    // GDI function to set the color of a single pixel.
-    SetPixel(device_context, x, y, palette[color_index]);
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        TextIO::print("SDL could not initialize! SDL_Error: " + std::string(SDL_GetError()) + "\n");
+        return false;
+    }
 
-    // IMPORTANT: Release the device context immediately after drawing.
-    ReleaseDC(console_window, device_context);
+    std:bool success = SDL_CreateWindowAndRenderer("Hello World", 800, 600, SDL_WINDOW_FULLSCREEN, &window, &renderer);
+    if (!success) {
+        TextIO::print("Window could not be created! SDL_Error: " + std::string(SDL_GetError()) + "\n");
+        return false;
+    }
+
+    is_initialized = true;
+    clear_screen();
+    update_screen();
+    return true;
 }
 
-void Graphics::line(int x1, int y1, int x2, int y2, int color_index) {
-    if (console_window == nullptr || color_index < 0 || color_index > 15) {
-        return;
+void Graphics::shutdown() {
+    if (!is_initialized) return;
+    if (renderer) {
+        SDL_DestroyRenderer(renderer);
+        renderer = nullptr;
     }
-    HDC device_context = GetDC(console_window);
-    if (device_context == nullptr) return;
-
-    HPEN pen = CreatePen(PS_SOLID, 1, palette[color_index]);
-    HPEN old_pen = (HPEN)SelectObject(device_context, pen);
-
-    MoveToEx(device_context, x1, y1, NULL);
-    LineTo(device_context, x2, y2);
-
-    SelectObject(device_context, old_pen);
-    DeleteObject(pen);
-
-    ReleaseDC(console_window, device_context);
+    if (window) {
+        SDL_DestroyWindow(window);
+        window = nullptr;
+    }
+    SDL_Quit();
+    is_initialized = false;
 }
 
-void Graphics::circle(int x, int y, int radius, int color_index) {
-    if (console_window == nullptr || color_index < 0 || color_index > 15) {
-        return;
+void Graphics::clear_screen() {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // Black
+    SDL_RenderClear(renderer);
+}
+
+void Graphics::update_screen() {
+    if (!renderer) return;
+    SDL_RenderPresent(renderer);
+}
+
+bool Graphics::handle_events() {
+    if (!is_initialized) return true;
+
+    SDL_Event event;
+    // Poll for all pending events
+    while (SDL_PollEvent(&event) != 0) {
+        // Check if the event is the user trying to close the window
+        if (event.type == SDL_EVENT_QUIT) {
+            quit_event_received = true;
+        }
     }
-    HDC device_context = GetDC(console_window);
-    if (device_context == nullptr) return;
+    return !quit_event_received;
+}
 
-    HPEN pen = CreatePen(PS_SOLID, 1, palette[color_index]);
-    HBRUSH brush = (HBRUSH)GetStockObject(NULL_BRUSH);
+bool Graphics::should_quit() {
+    return quit_event_received;
+}
 
-    HPEN old_pen = (HPEN)SelectObject(device_context, pen);
-    HBRUSH old_brush = (HBRUSH)SelectObject(device_context, brush);
+void Graphics::clear_screen(Uint8 r, Uint8 g, Uint8 b) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255); // Use specified color
+    SDL_RenderClear(renderer);
+}
 
-    int left = x - radius;
-    int top = y - radius;
-    int right = x + radius;
-    int bottom = y + radius;
-    Ellipse(device_context, left, top, right, bottom);
+void Graphics::pset(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    SDL_RenderPoint(renderer, (float)x, (float)y);
+}
 
-    SelectObject(device_context, old_pen);
-    SelectObject(device_context, old_brush);
-    DeleteObject(pen);
+void Graphics::line(int x1, int y1, int x2, int y2, Uint8 r, Uint8 g, Uint8 b) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    SDL_RenderLine(renderer, (float)x1, (float)y1, (float)x2, (float)y2);
+}
 
-    ReleaseDC(console_window, device_context);
+void Graphics::rect(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, bool is_filled) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    SDL_FRect rect = { (float)x, (float)y, (float)w, (float)h };
+    if (is_filled) {
+        SDL_RenderFillRect(renderer, &rect);
+    }
+    else {
+        SDL_RenderRect(renderer, &rect);
+    }
+}
+
+void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+
+    // Simple trigonometric algorithm to draw a circle
+    for (int i = 0; i < 360; ++i) {
+        float angle = i * 3.14159f / 180.0f; // Convert degree to radian
+        float x = center_x + radius * cos(angle);
+        float y = center_y + radius * sin(angle);
+        SDL_RenderPoint(renderer, x, y);
+    }
 }

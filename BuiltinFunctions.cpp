@@ -17,6 +17,7 @@
 #include <iomanip> 
 #include <sstream>
 #include <iostream>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -120,6 +121,123 @@ BasicValue builtin_len(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // --- Case 3: Fallback to original behavior (length of string representation) ---
     return static_cast<double>(to_string(val).length());
 }
+
+
+// --- SDL Integration ---
+
+#ifdef SDL3
+// SCREEN width, height, [title$]
+// Initializes the graphics screen.
+BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+
+    int width = static_cast<int>(to_double(args[0]));
+    int height = static_cast<int>(to_double(args[1]));
+    std::string title = "jdBasic Graphics";
+    if (args.size() == 3) {
+        title = to_string(args[2]);
+    }
+
+    if (!vm.graphics_system.init(title, width, height)) {
+        Error::set(1, vm.runtime_current_line); // Generic error
+    }
+
+    return false; // Procedures return a dummy value
+}
+
+// PSET x, y, [r, g, b]
+// Sets a pixel at a specific coordinate to a color.
+BasicValue builtin_pset(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 2 || args.size() > 5) { Error::set(8, vm.runtime_current_line); return false; }
+
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+    Uint8 r = 255, g = 255, b = 255; // Default to white
+
+    if (args.size() == 5) {
+        r = static_cast<Uint8>(to_double(args[2]));
+        g = static_cast<Uint8>(to_double(args[3]));
+        b = static_cast<Uint8>(to_double(args[4]));
+    }
+    vm.graphics_system.pset(x, y, r, g, b);
+    return false;
+}
+
+// SCREENFLIP
+// Updates the screen to show all drawing done since the last flip.
+BasicValue builtin_screenflip(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.update_screen();
+    return false;
+}
+
+// LINE x1, y1, x2, y2, [r, g, b]
+BasicValue builtin_line(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 4 || args.size() > 7) { Error::set(8, vm.runtime_current_line); return false; }
+
+    int x1 = static_cast<int>(to_double(args[0]));
+    int y1 = static_cast<int>(to_double(args[1]));
+    int x2 = static_cast<int>(to_double(args[2]));
+    int y2 = static_cast<int>(to_double(args[3]));
+    Uint8 r = 255, g = 255, b = 255;
+
+    if (args.size() == 7) {
+        r = static_cast<Uint8>(to_double(args[4]));
+        g = static_cast<Uint8>(to_double(args[5]));
+        b = static_cast<Uint8>(to_double(args[6]));
+    }
+    vm.graphics_system.line(x1, y1, x2, y2, r, g, b);
+    return false;
+}
+
+// RECT x, y, w, h, [r, g, b], [fill_bool]
+BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 4 || args.size() > 8) { Error::set(8, vm.runtime_current_line); return false; }
+
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+    int w = static_cast<int>(to_double(args[2]));
+    int h = static_cast<int>(to_double(args[3]));
+    Uint8 r = 255, g = 255, b = 255;
+    bool fill = false;
+
+    if (args.size() >= 7) {
+        r = static_cast<Uint8>(to_double(args[4]));
+        g = static_cast<Uint8>(to_double(args[5]));
+        b = static_cast<Uint8>(to_double(args[6]));
+    }
+    if (args.size() == 8) {
+        fill = to_bool(args[7]);
+    }
+    vm.graphics_system.rect(x, y, w, h, r, g, b, fill);
+    return false;
+}
+
+// CIRCLE x, y, radius, [r, g, b]
+BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 3 || args.size() > 6) { Error::set(8, vm.runtime_current_line); return false; }
+
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+    int radius = static_cast<int>(to_double(args[2]));
+    Uint8 r = 255, g = 255, b = 255;
+
+    if (args.size() == 6) {
+        r = static_cast<Uint8>(to_double(args[3]));
+        g = static_cast<Uint8>(to_double(args[4]));
+        b = static_cast<Uint8>(to_double(args[5]));
+    }
+    vm.graphics_system.circle(x, y, radius, r, g, b);
+    return false;
+}
+
+#endif
+
+
+// --- String Functions ---
 
 // LEFT$(string, n)
 BasicValue builtin_left_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -772,6 +890,77 @@ BasicValue builtin_grade(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result_ptr;
 }
 
+// DIFF(array1, array2) -> array
+// Returns a new array containing elements that are in array1 but not in array2.
+BasicValue builtin_diff(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line); return {};
+    }
+
+    const auto& a_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& b_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!a_ptr || !b_ptr) return {};
+
+    // 1. Create a hash set from the second array for fast lookups.
+    //    We will store the string representation of each value to handle all types.
+    std::unordered_set<std::string> exclusion_set;
+    for (const auto& val : b_ptr->data) {
+        exclusion_set.insert(to_string(val));
+    }
+
+    // 2. Iterate through the first array. If an element is NOT in the exclusion set,
+    //    add it to our result.
+    auto result_ptr = std::make_shared<Array>();
+    for (const auto& val : a_ptr->data) {
+        if (exclusion_set.find(to_string(val)) == exclusion_set.end()) {
+            result_ptr->data.push_back(val);
+        }
+    }
+
+    // 3. Set the shape of the resulting vector.
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
+// In BuiltinFunctions.cpp, add this new function
+
+// APPEND(array, value) -> array
+// Appends a value or another array to an array, returning a new array.
+BasicValue builtin_append(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line); // First argument must be an array
+        return {};
+    }
+
+    const auto& source_array_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const BasicValue& value_to_add = args[1];
+
+    if (!source_array_ptr) return {};
+
+    auto result_ptr = std::make_shared<Array>();
+
+    // 1. Copy the data from the original source array.
+    result_ptr->data = source_array_ptr->data;
+
+    // 2. Check if the value to add is also an array.
+    if (std::holds_alternative<std::shared_ptr<Array>>(value_to_add)) {
+        // If so, append all its elements (flattening it).
+        const auto& other_array_ptr = std::get<std::shared_ptr<Array>>(value_to_add);
+        if (other_array_ptr) {
+            result_ptr->data.insert(result_ptr->data.end(), other_array_ptr->data.begin(), other_array_ptr->data.end());
+        }
+    }
+    else {
+        // Otherwise, just append the single scalar value.
+        result_ptr->data.push_back(value_to_add);
+    }
+
+    // 3. The result of APPEND is always a flat 1D vector.
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
 
 // --- Arithmetic Functions ---
 
@@ -957,10 +1146,27 @@ BasicValue builtin_cvdate(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
 // --- Procedures ---
 BasicValue builtin_cls(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    // Procedures can still take arguments, but CLS doesn't need any.
-    // We could add error checking for args.size() if we wanted.
+    // This function is now context-aware.
+#ifdef SDL3
+    if (vm.graphics_system.is_initialized) {
+        // If graphics are on, CLS clears the graphics window.
+        Uint8 r = 0, g = 0, b = 0;
+        if (args.size() == 3) {
+            r = static_cast<Uint8>(to_double(args[0]));
+            g = static_cast<Uint8>(to_double(args[1]));
+            b = static_cast<Uint8>(to_double(args[2]));
+        }
+        vm.graphics_system.clear_screen(r, g, b);
+        vm.graphics_system.update_screen(); // CLS should be immediate
+    }
+    else {
+        // Otherwise, it clears the text console.
+        TextIO::clearScreen();
+    }
+#else
     TextIO::clearScreen();
-    return false; // Procedures must return something; the value is ignored.
+#endif
+    return false;
 }
 
 BasicValue builtin_locate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1317,6 +1523,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("DROP", 2, builtin_drop);
     register_func("GRADE", 1, builtin_grade);
     register_func("SLICE", 3, builtin_slice);
+    register_func("DIFF", 2, builtin_diff);
+    register_func("APPEND", 2, builtin_append);
 
 
     // --- Register Time Functions ---
@@ -1338,8 +1546,17 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
         table_to_populate[to_upper(info.name)] = info;
         };
 
+
     // --- Register Methods ---
-    register_proc("CLS", 0, builtin_cls);
+#ifdef SDL3
+    register_proc("SCREEN", -1, builtin_screen);
+    register_proc("PSET", -1, builtin_pset); 
+    register_proc("SCREENFLIP", 0, builtin_screenflip);
+    register_proc("LINE", -1, builtin_line);     // <-- ADD THIS
+    register_proc("RECT", -1, builtin_rect);     // <-- ADD THIS
+    register_proc("CIRCLE", -1, builtin_circle); // <-- ADD THIS
+#endif
+    register_proc("CLS", -1, builtin_cls);
     register_proc("LOCATE", 2, builtin_locate);
     register_proc("SLEEP", 1, builtin_sleep);   
     register_proc("CURSOR", 1, builtin_cursor);

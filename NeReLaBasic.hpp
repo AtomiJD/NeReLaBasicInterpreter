@@ -8,6 +8,9 @@
 #include "Types.hpp"
 #include "Tokens.hpp"
 #include <functional> 
+#ifdef SDL3
+#include "Graphics.hpp"
+#endif
 
 class NeReLaBasic {
 public:
@@ -110,6 +113,10 @@ public:
     bool is_compiling_module = false;
     // Holds the name of the module currently being compiled
     std::string current_module_name;
+
+#ifdef SDL3
+    Graphics graphics_system;
+#endif
 
     // --- Member Functions ---
     NeReLaBasic(); // Constructor

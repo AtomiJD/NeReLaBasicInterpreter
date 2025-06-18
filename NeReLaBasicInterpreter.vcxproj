@@ -72,6 +72,9 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <TargetName>jdBasic</TargetName>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\include</IncludePath>
+    <ReferencePath>$(VC_ReferencesPath_x64);</ReferencePath>
+    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\lib\x64</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <TargetName>jdBasic</TargetName>
@@ -108,13 +111,14 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions); SDL3</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); SDL3.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -138,6 +142,7 @@
     <ClCompile Include="BuiltinFunctions.cpp" />
     <ClCompile Include="Commands.cpp" />
     <ClCompile Include="Error.cpp" />
+    <ClCompile Include="Graphics.cpp" />
     <ClCompile Include="NeReLaBasic.cpp" />
     <ClCompile Include="NeReLaBasicInterpreter.cpp" />
     <ClCompile Include="Statements.cpp" />
@@ -149,6 +154,7 @@
     <ClInclude Include="BuiltinFunctions.hpp" />
     <ClInclude Include="Commands.hpp" />
     <ClInclude Include="Error.hpp" />
+    <ClInclude Include="Graphics.hpp" />
     <ClInclude Include="NeReLaBasic.hpp" />
     <ClInclude Include="Statements.hpp" />
     <ClInclude Include="StringUtils.hpp" />

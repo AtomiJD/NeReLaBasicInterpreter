@@ -887,6 +887,14 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
 
     // Main execution loop
     while (pcode < active_p_code->size()) {
+
+#ifdef SDL3
+        if (graphics_system.is_initialized) { // Check if graphics are active
+            if (!graphics_system.handle_events()) {
+                break; // Exit execution if the user closed the window
+            }
+        }
+#endif
         if (_kbhit()) {
             char key = _getch(); // Get the pressed key
 
@@ -946,6 +954,11 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
             pcode++; // Consume the C_CR
         }
     }
+
+#ifdef SDL3
+    // After the loop, ensure the graphics system is shut down
+    graphics_system.shutdown();
+#endif
 
     // Clear the pointer so it's not pointing to stale data
     active_p_code = prev_active_p_code;
