@@ -73,13 +73,13 @@ These are the core keywords that control program flow and actions.
        PRINT "luli"
     ENDIF
 
-    [cite_start]IF I = 5 THEN PRINT "FIVE" [cite: 23]
+    IF I = 5 THEN PRINT "FIVE"
     ```
   * **`IMPORT module`**
     > Imports an external `.jdb` module, making its exported functions and subs available.
     ```basic
     IMPORT MATH
-    [cite_start]X = MATH.ADD(15, 7) [cite: 3]
+    X = MATH.ADD(15, 7)
     ```
   * **`INPUT [prompt$ ,|;] var`**
     > Pauses and waits for the user to enter data, which is stored in `var`.
@@ -120,27 +120,27 @@ These are the core keywords that control program flow and actions.
 
 ### String Functions
 
-  * [cite\_start]**`ASC(text$)`**: Returns the ASCII code of the first character in a string. [cite: 11]
-  * [cite\_start]**`CHR$(n)`**: Returns a one-character string corresponding to an ASCII code. [cite: 11]
+  * **`ASC(text$)`**: Returns the ASCII code of the first character in a string. 
+  * **`CHR$(n)`**: Returns a one-character string corresponding to an ASCII code. 
   * **`INKEY$`**: Checks for a keypress without pausing. Returns the key pressed or an empty string.
-  * [cite\_start]**`INSTR([start,] haystack$, needle$)`**: Finds the position of `needle$` within `haystack$`. [cite: 13, 14]
-  * [cite\_start]**`LCASE$(text$)`**: Converts a string to all lowercase. [cite: 10]
+  * **`INSTR([start,] haystack$, needle$)`**: Finds the position of `needle$` within `haystack$`. 
+  * **`LCASE$(text$)`**: Converts a string to all lowercase. 
   * **`LEFT$(text$, n)`**: Returns the first `n` characters of a string.
   * **`LEN(text$)`**: Returns the number of characters in a string.
-  * [cite\_start]**`MID$(text$, start, [length])`**: Returns a substring starting from `start` with an optional `length`. [cite: 9]
-  * [cite\_start]**`RIGHT$(text$, n)`**: Returns the last `n` characters of a string. [cite: 9]
+  * **`MID$(text$, start, [length])`**: Returns a substring starting from `start` with an optional `length`. 
+  * **`RIGHT$(text$, n)`**: Returns the last `n` characters of a string.
   * **`SPLIT(source$, delimiter$)`**: Returns a 1D array of strings by splitting `source$` at each `delimiter$`.
-  * [cite\_start]**`STR$(n)`**: Converts a number `n` into its string representation. [cite: 12]
-  * [cite\_start]**`TRIM$(text$)`**: Removes leading and trailing whitespace from a string. [cite: 8]
-  * [cite\_start]**`UCASE$(text$)`**: Converts a string to all uppercase. [cite: 10]
-  * [cite\_start]**`VAL(text$)`**: Converts a string representation of a number into a numeric type. [cite: 12]
+  * **`STR$(n)`**: Converts a number `n` into its string representation.
+  * **`TRIM$(text$)`**: Removes leading and trailing whitespace from a string. 
+  * **`UCASE$(text$)`**: Converts a string to all uppercase. 
+  * **`VAL(text$)`**: Converts a string representation of a number into a numeric type. 
 
 ### Math Functions
 
   * **`COS(n)`**: Returns the cosine of `n` (in radians).
-  * [cite\_start]**`RND(n)`**: Returns a random floating-point number between 0.0 and 1.0. [cite: 17]
-  * [cite\_start]**`SIN(n)`**: Returns the sine of `n` (in radians). [cite: 16]
-  * [cite\_start]**`SQR(n)`**: Returns the square root of `n`. [cite: 15]
+  * **`RND(n)`**: Returns a random floating-point number between 0.0 and 1.0. 
+  * **`SIN(n)`**: Returns the sine of `n` (in radians). 
+  * **`SQR(n)`**: Returns the square root of `n`. 
   * **`TAN(n)`**: Returns the tangent of `n` (in radians).
 
 ### Array & Matrix Functions (APL-Style)
@@ -152,7 +152,7 @@ These are the core keywords that control program flow and actions.
   * **`DROP(n, array)`**: Returns a new array with the first `n` (or last `n` if negative) elements removed.
   * **`GRADE(array)`**: Returns an array of indices that would sort the input array.
   * **`IOTA(n)`**: Creates a 1D array of `n` numbers, from 1 to `n`.
-  * [cite\_start]**`LEN(array)`**: Returns a 1D array containing the shape (dimensions) of the input array. [cite: 5]
+  * **`LEN(array)`**: Returns a 1D array containing the shape (dimensions) of the input array. 
   * **`MATMUL(matrixA, matrixB)`**: Performs standard matrix multiplication.
   * **`MAX(array)`**: Returns the largest numeric value in an array.
   * **`MIN(array)`**: Returns the smallest numeric value in an array.
@@ -167,11 +167,11 @@ These are the core keywords that control program flow and actions.
 
 ### Date & Time Functions
 
-  * [cite\_start]**`CVDATE(date$)`**: Converts a string in "YYYY-MM-DD" format to a `DATE` type value. [cite: 19]
+  * **`CVDATE(date$)`**: Converts a string in "YYYY-MM-DD" format to a `DATE` type value. 
   * **`DATE$`**: Returns the current system date as a string (e.g., "2025-06-18").
-  * [cite\_start]**`DATEADD(part$, n, date)`**: Adds `n` units of `part$` (e.g., "D" for day) to a `DATE` value. [cite: 19]
-  * [cite\_start]**`NOW()`**: Returns a `DATE` type value representing the current date and time. [cite: 18]
-  * [cite\_start]**`TICK()`**: Returns the number of milliseconds since the program started. [cite: 18]
+  * **`DATEADD(part$, n, date)`**: Adds `n` units of `part$` (e.g., "D" for day) to a `DATE` value. 
+  * **`NOW()`**: Returns a `DATE` type value representing the current date and time. 
+  * **`TICK()`**: Returns the number of milliseconds since the program started. 
   * **`TIME$`**: Returns the current system time as a string (e.g., "15:00:00").
 
 ### File I/O Functions
@@ -186,7 +186,7 @@ These are the core keywords that control program flow and actions.
   * **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`. These operate element-wise when used with arrays.
   * **Comparison**: `=`, `<>`, `<`, `>`, `<=`, `>=`.
   * **Logical**: `AND`, `OR`, `NOT`.
-  * **Function Reference**: `@`. [cite\_start]Used after a function name to create a reference that can be passed to another function (e.g., `apply(inc@, 10)` [cite: 22]).
+  * **Function Reference**: `@`. Used after a function name to create a reference that can be passed to another function (e.g., `apply(inc@, 10)` ).
 
 -----
 

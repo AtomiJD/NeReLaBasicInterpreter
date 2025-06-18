@@ -189,6 +189,7 @@ endfunc
 func apply(fa,cc)
     return fa(cc)
 endfunc
+
 print apply(inc@,10)
 print apply(dec@,12)
 
@@ -246,12 +247,13 @@ Dim o_map[20]
 
 s_map = [1,5,8,7,45,66,12]
 
-sub printresult(result[])
+sub printresult(result)
    for i = 0 to len(result)-1
        if result[i]>0 then
            print result[i], " ";
        endif
    next i
+print
 endsub
 
 func iseven(a)
@@ -274,10 +276,10 @@ func filter(fu,in[],out[])
    next i
 endfunc
 
-filter(iseven@,s_map[],o_map[])
+filter(iseven@,s_map,o_map)
 
 print "Result filter: "
-printresult o_map[]
+printresult o_map
 
 print
 print "Done"

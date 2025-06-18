@@ -1,33 +1,37 @@
-' --- APL/Functional Style Prime Sieve (Set-based) - CORRECTED ---
+Dim o_map[20]
 
-PRINT "--- Calculating Primes using Set Difference ---"
-LIMIT = 1000
+s_map = [1,5,8,7,45,66,12]
 
-' 1. Define the set of potential primes: all odd numbers from 3 up to the limit.
-ODDS = (IOTA(49) - 1) * 2 + 3
-PRINT "Generated " ; LEN(ODDS); " odd numbers to test."
+sub printresult(result)
+   for i = 0 to len(result)-1
+       if result[i]>0 then
+           print result[i], " ";
+       endif
+   next i
+print
+endsub
 
-' 2. Define the set of potential prime factors.
-FACTORS = []
-FOR I = 3 TO SQR(LIMIT) STEP 2
-    FACTORS = APPEND(FACTORS, I) ' <-- CORRECTED LINE
-NEXT I
+func iseven(a)
+   if a mod 2 = 0 then
+      r=1
+   else
+      r=0
+   endif
+   return r
+endfunc
 
-' 3. Define the set of composite numbers by iterating through the factors.
-COMPOSITES = []
-FOR I = 0 TO LEN(FACTORS)-1
-    P = FACTORS[I]
-    ' Generate all odd multiples of P starting from P*P.
-    FOR J = P * P TO LIMIT STEP P * 2
-        COMPOSITES = APPEND(COMPOSITES, J) ' <-- CORRECTED LINE
-    NEXT J
-NEXT I
+func filter(fu,in[],out[])
+   j=0
+   for i = 0 to len(in) - 1
+      m=fu(in[i])
+      if m = 1 then
+         out[j]=in[i]
+         j=j+1
+      endif
+   next i
+endfunc
 
-' 4. Calculate the difference between the two sets.
-ODD_PRIMES = DIFF(ODDS, COMPOSITES)
+filter(iseven@,s_map,o_map)
 
-' 5. The final list of primes is 2, plus all the odd primes.
-ALL_PRIMES = APPEND([2], ODD_PRIMES) ' <-- CORRECTED LINE
-
-PRINT "Primes up to "; LIMIT; " are:"
-PRINT ALL_PRIMES
+print "Result filter: "
+printresult o_map
