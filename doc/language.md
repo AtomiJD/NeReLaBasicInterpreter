@@ -1,22 +1,18 @@
-Of course. Creating a comprehensive reference manual is a great way to solidify the project. Based on the source files you've provided, here is a `README.md` file documenting all the available non-graphics commands and functions in jdBasic, with examples drawn from your `test.txt` file.
-
------
-
 # jdBasic Language Reference
 
 This document serves as the official language reference for the jdBasic interpreter. It details all available statements, functions, and operators.
 
 ## Table of Contents
 
-1.  [Commands (Statements)](https://www.google.com/search?q=%23commands-statements)
-2.  [Built-in Functions](https://www.google.com/search?q=%23built-in-functions)
-      * [String Functions](https://www.google.com/search?q=%23string-functions)
-      * [Math Functions](https://www.google.com/search?q=%23math-functions)
-      * [Array & Matrix Functions (APL-Style)](https://www.google.com/search?q=%23array--matrix-functions-apl-style)
-      * [Date & Time Functions](https://www.google.com/search?q=%23date--time-functions)
-      * [File I/O Functions](https://www.google.com/search?q=%23file-io-functions)
-3.  [Operators](https://www.google.com/search?q=%23operators)
-4.  [Error Codes](https://www.google.com/search?q=%23error-codes)
+1.  [Commands (Statements)]
+2.  [Built-in Functions]
+      * [String Functions]
+      * [Math Functions]
+      * [Array & Matrix Functions (APL-Style)]
+      * [Date & Time Functions]
+      * [File I/O Functions]
+3.  [Operators]
+4.  [Error Codes]
 
 -----
 
