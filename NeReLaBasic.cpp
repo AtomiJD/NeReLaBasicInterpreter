@@ -87,6 +87,8 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     active_function_table = &main_function_table;
     register_builtin_functions(*this, *active_function_table);
     srand(static_cast<unsigned int>(time(nullptr)));
+    builtin_constants["VBNEWLINE"] = std::string("\n");
+    builtin_constants["PI"] = 3.14159265358979323846;
 }
 
 bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
@@ -253,6 +255,10 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
         buffer = lineinput.substr(ident_start_pos, prgptr - ident_start_pos);
         buffer = to_upper(buffer);
+
+        if (vm.builtin_constants.count(buffer)) {
+            return Tokens::ID::CONSTANT;
+        }
 
         if (prgptr < lineinput.length() && lineinput[prgptr] == '$') {
             buffer += '$';
@@ -652,7 +658,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             out_p_code.push_back(static_cast<uint8_t>(token));
             if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT || token == Tokens::ID::INT ||
                 token == Tokens::ID::STRVAR || token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS ||
-                token == Tokens::ID::CALLFUNC)
+                token == Tokens::ID::CALLFUNC || token == Tokens::ID::CONSTANT)
             {
                 for (char c : buffer) out_p_code.push_back(c);
                 out_p_code.push_back(0);
@@ -1200,6 +1206,12 @@ BasicValue NeReLaBasic::parse_primary() {
         pcode += sizeof(double);
 
         return value;
+    }
+    if (token == Tokens::ID::CONSTANT) {
+        pcode++; // Consume CONSTANT token
+        std::string const_name = read_string(*this);
+        // Look up the constant's value in our table and return it
+        return builtin_constants.at(const_name);
     }
     if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) { // Treat all numeric vars as float now
         pcode++;

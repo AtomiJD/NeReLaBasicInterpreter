@@ -1450,6 +1450,101 @@ BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     return result_ptr;
 }
 
+// --- NEW: High-Performance File I/O Writers ---
+
+// TXTWRITER filename$, content$
+// Writes the content of a string variable to a text file.
+BasicValue builtin_txtwriter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+
+    std::string filename = to_string(args[0]);
+    std::string content = to_string(args[1]);
+
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        Error::set(12, vm.runtime_current_line); // File I/O Error
+        return false;
+    }
+
+    outfile << content;
+    return false; // Procedures return a dummy value
+}
+
+// CSVWRITER filename$, array, [delimiter$], [header_array]
+// Writes a 2D array to a CSV file, with an optional header row.
+BasicValue builtin_csvwriter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 2 || args.size() > 4) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+
+    // 1. Parse Arguments
+    std::string filename = to_string(args[0]);
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line); // Second arg must be an array
+        return false;
+    }
+    const auto& array_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+
+    char delimiter = ',';
+    if (args.size() >= 3) {
+        std::string delim_str = to_string(args[2]);
+        if (!delim_str.empty()) {
+            delimiter = delim_str[0];
+        }
+    }
+
+    // 2. Validate Array Shape
+    if (!array_ptr || array_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line); // Must be a 2D matrix
+        return false;
+    }
+
+    // 3. Open File for Writing
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        Error::set(12, vm.runtime_current_line); // File I/O Error
+        return false;
+    }
+
+    // Handle Optional Header Array ---
+    if (args.size() == 4) {
+        if (!std::holds_alternative<std::shared_ptr<Array>>(args[3])) {
+            Error::set(15, vm.runtime_current_line); // Fourth arg must be an array
+            return false;
+        }
+        const auto& header_ptr = std::get<std::shared_ptr<Array>>(args[3]);
+        if (header_ptr) {
+            for (size_t i = 0; i < header_ptr->data.size(); ++i) {
+                outfile << to_string(header_ptr->data[i]);
+                if (i < header_ptr->data.size() - 1) {
+                    outfile << delimiter;
+                }
+            }
+            outfile << '\n'; // End the header line
+        }
+    }
+
+    // 4. Write Data 
+    size_t rows = array_ptr->shape[0];
+    size_t cols = array_ptr->shape[1];
+
+    for (size_t r = 0; r < rows; ++r) {
+        for (size_t c = 0; c < cols; ++c) {
+            const BasicValue& val = array_ptr->data[r * cols + c];
+            outfile << to_string(val);
+            if (c < cols - 1) {
+                outfile << delimiter;
+            }
+        }
+        outfile << '\n';
+    }
+
+    return false;
+}
 
 // --- GUI and Graphic and more ---
 // Handles: COLOR fg, bg
@@ -1567,8 +1662,11 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("COLOR", 2, builtin_color);
     register_proc("MKDIR", 1, builtin_mkdir); 
     register_proc("KILL", 1, builtin_kill);   
+
     register_func("CSVREADER", -1, builtin_csvreader); // -1 for optional args
     register_func("TXTREADER$", 1, builtin_txtreader_str);
+    register_proc("TXTWRITER", 2, builtin_txtwriter);
+    register_proc("CSVWRITER", -1, builtin_csvwriter); // -1 for optional delimiter
 
 }
 

@@ -66,6 +66,7 @@ namespace Tokens {
         C_LE = 0x38, // Less than or Equal <=
         C_GE = 0x39, // Greater than or Equal >=
         C_COLON = 0x3A,
+        CONSTANT = 0x3B,
         MODULE = 0x40,
         GOFUNC = 0x41,
         F_INC = 0x42,

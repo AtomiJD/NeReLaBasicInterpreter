@@ -1,4 +1,4 @@
-' --- APL/Functional Style Prime Sieve (Set-based) - CORRECTED ---
+' --- APL/Functional Style Prime Sieve (Set-based) ---
 
 PRINT "--- Calculating Primes using Set Difference ---"
 LIMIT = 1000
@@ -10,7 +10,7 @@ PRINT "Generated " ; LEN(ODDS); " odd numbers to test."
 ' 2. Define the set of potential prime factors.
 FACTORS = []
 FOR I = 3 TO SQR(LIMIT) STEP 2
-    FACTORS = APPEND(FACTORS, I) ' <-- CORRECTED LINE
+    FACTORS = APPEND(FACTORS, I)
 NEXT I
 
 ' 3. Define the set of composite numbers by iterating through the factors.
@@ -19,7 +19,7 @@ FOR I = 0 TO LEN(FACTORS)-1
     P = FACTORS[I]
     ' Generate all odd multiples of P starting from P*P.
     FOR J = P * P TO LIMIT STEP P * 2
-        COMPOSITES = APPEND(COMPOSITES, J) ' <-- CORRECTED LINE
+        COMPOSITES = APPEND(COMPOSITES, J)
     NEXT J
 NEXT I
 
@@ -27,7 +27,7 @@ NEXT I
 ODD_PRIMES = DIFF(ODDS, COMPOSITES)
 
 ' 5. The final list of primes is 2, plus all the odd primes.
-ALL_PRIMES = APPEND([2], ODD_PRIMES) ' <-- CORRECTED LINE
+ALL_PRIMES = APPEND([2], ODD_PRIMES) 
 
 PRINT "Primes up to "; LIMIT; " are:"
 PRINT ALL_PRIMES

@@ -77,6 +77,8 @@ public:
         FunctionTable function_table;
     };
 
+    // This table will hold our built-in constants like 'vbNewLine' and 'PI'
+    std::map<std::string, BasicValue> builtin_constants;
 
     std::string source_code;      // Stores the BASIC program source text
     std::vector<std::string> source_lines;

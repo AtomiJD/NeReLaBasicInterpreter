@@ -128,7 +128,7 @@ X = 90
 PRINT "The square root of ";X;" is "; SQR(X)
 
 ' Note: SIN/COS/TAN work in radians, not degrees
-PI = 3.14159
+
 PRINT "The sine of PI/2 is roughly "; SIN(PI / 2)
 
 print "10 random, Numbers: ";
