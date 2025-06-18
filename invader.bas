@@ -2,6 +2,7 @@ REM =============================================================
 REM JD'S INVADERS, TRANSLATED TO NERELA BASIC
 REM Original Python version by 'jd'
 REM Translation and adaptation by Gemini
+REM Correct Gemini's hallucination and misunderstanding by jd
 REM =============================================================
 
 REM --- GAME CONFIGURATION ---

@@ -1042,6 +1042,12 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_callsub(*this);
         break;
+
+    case Tokens::ID::EDIT:
+        pcode++;
+        Commands::do_edit(*this);
+        break;
+
     case Tokens::ID::LIST:
         pcode++;
         Commands::do_list(*this);
@@ -1090,6 +1096,7 @@ void NeReLaBasic::statement() {
     case Tokens::ID::C_CR:
         // This token is followed by a 2-byte line number. Skip it during execution.
         pcode++;
+        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
         pcode += 2;
         break;
 

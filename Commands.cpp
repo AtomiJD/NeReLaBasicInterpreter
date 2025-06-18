@@ -4,12 +4,14 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
+#include <conio.h>
 #include "Commands.hpp"
 #include "NeReLaBasic.hpp" // We need the full class definition here
 #include "TextIO.hpp"
 #include "Tokens.hpp"
 #include "Error.hpp"
 #include "Types.hpp"
+#include "TextEditor.hpp"
 
 
 namespace { // Use an anonymous namespace to keep this helper local to this file
@@ -725,7 +727,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         frame.return_pcode = vm.pcode;
         // NEW: Save the entire function table of the caller
         frame.previous_function_table_ptr = vm.active_function_table;
-        //frame.for_stack_size_on_entry = vm.for_stack.size();
+        frame.for_stack_size_on_entry = vm.for_stack.size();
         vm.call_stack.push_back(frame);
 
         // --- CONTEXT SWITCH ---
@@ -852,9 +854,57 @@ void Commands::do_endsub(NeReLaBasic& vm) {
     vm.call_stack.pop_back();
 }
 
+
+void Commands::do_edit(NeReLaBasic& vm) {
+    std::string filename_to_edit;
+
+    // Check if a filename argument was provided
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::STRING) {
+        vm.pcode++; // Consume STRING token
+        filename_to_edit = read_string(vm);
+
+        // Load the file into the VM's source buffer
+        std::ifstream infile(filename_to_edit);
+        if (infile) {
+            vm.source_lines.clear();
+            std::string line;
+            while (std::getline(infile, line)) {
+                // Remove trailing carriage return if present
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                vm.source_lines.push_back(line);
+            }
+        }
+        else {
+            TextIO::print("New file: " + filename_to_edit + "\n");
+        }
+    }
+
+    // Launch the editor, passing a reference to the source lines
+    TextEditor editor(vm.source_lines);
+    editor.run();
+
+    // After editor exits, offer to save if a filename was used
+    if (!filename_to_edit.empty()) {
+        TextIO::print("Save changes to " + filename_to_edit + "? (Y/N) ");
+        char response = _getch();
+        TextIO::print(std::string(1, response) + "\n");
+        if (toupper(response) == 'Y') {
+            std::ofstream outfile(filename_to_edit);
+            for (const auto& line : vm.source_lines) {
+                outfile << line << '\n';
+            }
+            TextIO::print("File saved.\n");
+        }
+    }
+}
+
 void Commands::do_list(NeReLaBasic& vm) {
-    // Simply print the stored source code.
-    TextIO::print(vm.source_code);
+    // Iterate through the vector and print with 1-based line numbers for readability
+    for (size_t i = 0; i < vm.source_lines.size(); ++i) {
+        TextIO::print(std::to_string(i + 1) + ": " + vm.source_lines[i] + "\n");
+    }
 }
 
 void Commands::do_load(NeReLaBasic& vm) {
@@ -874,9 +924,12 @@ void Commands::do_load(NeReLaBasic& vm) {
 
     TextIO::print("LOADING " + filename + "\n");
     // Read the entire file into the source_code string
-    std::stringstream buffer;
-    buffer << infile.rdbuf();
-    vm.source_code = buffer.str();
+    vm.source_lines.clear();
+    std::string line;
+    while (std::getline(infile, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        vm.source_lines.push_back(line);
+    }
 }
 
 void Commands::do_save(NeReLaBasic& vm) {
@@ -895,13 +948,21 @@ void Commands::do_save(NeReLaBasic& vm) {
 
     TextIO::print("SAVING " + filename + "\n");
     // Write the source_code string directly to the file
-    outfile << vm.source_code;
+    for (const auto& line : vm.source_lines) {
+        outfile << line << '\n';
+    }
 }
 
 void Commands::do_compile(NeReLaBasic& vm) {
+    std::stringstream ss;
+    for (const auto& line : vm.source_lines) {
+        ss << line << '\n';
+    }
+    std::string source_to_compile = ss.str();
+
     // Compile into the main program buffer
     TextIO::print("Compiling...\n");
-    if (vm.tokenize_program(vm.program_p_code, vm.source_code) == 0) {
+    if (vm.tokenize_program(vm.program_p_code, source_to_compile) == 0) {
         if (!vm.if_stack.empty()) {
             // There are unclosed IF blocks. Get the line number of the last one.
             uint16_t error_line = vm.if_stack.back().source_line;
@@ -927,6 +988,7 @@ void Commands::do_run(NeReLaBasic& vm) {
     do_compile(vm);
     if (Error::get() != 0) {
         Error::print();
+        return;
     }
 
     // Clear variables and prepare for a clean run

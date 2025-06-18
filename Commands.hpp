@@ -24,6 +24,7 @@ namespace Commands {
     void do_endsub(NeReLaBasic& vm);
     void do_callsub(NeReLaBasic& vm);
 
+    void do_edit(NeReLaBasic& vm);
     void do_list(NeReLaBasic& vm);
     void do_load(NeReLaBasic& vm);
     void do_save(NeReLaBasic& vm);

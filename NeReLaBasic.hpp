@@ -76,6 +76,7 @@ public:
 
 
     std::string source_code;      // Stores the BASIC program source text
+    std::vector<std::string> source_lines;
     std::vector<uint8_t> program_p_code;    // Stores the compiled bytecode for RUN/DUMP
     std::vector<uint8_t> direct_p_code;     // Temporary buffer for direct-mode commands
     const std::vector<uint8_t>* active_p_code = nullptr;    //Active P-Code Pointer

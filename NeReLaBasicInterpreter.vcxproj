@@ -142,6 +142,7 @@
     <ClCompile Include="NeReLaBasicInterpreter.cpp" />
     <ClCompile Include="Statements.cpp" />
     <ClCompile Include="StringUtils.cpp" />
+    <ClCompile Include="TextEditor.cpp" />
     <ClCompile Include="TextIO.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -151,6 +152,7 @@
     <ClInclude Include="NeReLaBasic.hpp" />
     <ClInclude Include="Statements.hpp" />
     <ClInclude Include="StringUtils.hpp" />
+    <ClInclude Include="TextEditor.hpp" />
     <ClInclude Include="TextIO.hpp" />
     <ClInclude Include="Tokens.hpp" />
     <ClInclude Include="Types.hpp" />
