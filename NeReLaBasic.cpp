@@ -293,6 +293,10 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             prgptr = suffix_ptr;
             return Tokens::ID::ARRAY_ACCESS;
         }
+        if (action_suffix == '{') { // <-- ADD THIS BLOCK
+            prgptr = suffix_ptr;
+            return Tokens::ID::MAP_ACCESS;
+        }
         if (action_suffix == '@') {
             prgptr = suffix_ptr + 1;
             return Tokens::ID::FUNCREF;
@@ -336,6 +340,8 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case '=': return Tokens::ID::C_EQ;
     case '[': return Tokens::ID::C_LEFTBRACKET;
     case ']': return Tokens::ID::C_RIGHTBRACKET;
+    case '{': return Tokens::ID::C_LEFTBRACE; 
+    case '}': return Tokens::ID::C_RIGHTBRACE;
     case ':': return Tokens::ID::C_COLON;
     }
 
@@ -656,9 +662,9 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
         }
         default: {
             out_p_code.push_back(static_cast<uint8_t>(token));
-            if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT || token == Tokens::ID::INT ||
-                token == Tokens::ID::STRVAR || token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS ||
-                token == Tokens::ID::CALLFUNC || token == Tokens::ID::CONSTANT)
+            if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT ||
+                token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS || token == Tokens::ID::MAP_ACCESS ||
+                token == Tokens::ID::CALLFUNC || token == Tokens::ID::CONSTANT || token == Tokens::ID::STRVAR)
             {
                 for (char c : buffer) out_p_code.push_back(c);
                 out_p_code.push_back(0);
@@ -1003,6 +1009,7 @@ void NeReLaBasic::statement() {
     case Tokens::ID::INT:
     case Tokens::ID::STRVAR: 
     case Tokens::ID::ARRAY_ACCESS:
+    case Tokens::ID::MAP_ACCESS:
         //pcode++;
         Commands::do_let(*this);
         break;
@@ -1278,6 +1285,37 @@ BasicValue NeReLaBasic::parse_primary() {
         catch (const std::exception&) {
             Error::set(10, runtime_current_line); // Bad subscript
             return false;
+        }
+    }
+    if (token == Tokens::ID::MAP_ACCESS) { 
+        pcode++; // Consume MAP_ACCESS token
+        std::string var_name = to_upper(read_string(*this));
+
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTBRACE) {
+            Error::set(1, runtime_current_line); return false;
+        }
+        BasicValue key_val = evaluate_expression();
+        if (Error::get() != 0) return false;
+        std::string key = to_string(key_val);
+
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACE) {
+            Error::set(1, runtime_current_line); return false;
+        }
+
+        BasicValue& map_var = get_variable(*this, var_name);
+        if (!std::holds_alternative<std::shared_ptr<Map>>(map_var)) {
+            Error::set(15, runtime_current_line); return false;
+        }
+        const auto& map_ptr = std::get<std::shared_ptr<Map>>(map_var);
+        if (!map_ptr) { Error::set(15, runtime_current_line); return false; }
+
+        // Check if the key exists and return its value
+        if (map_ptr->data.count(key)) {
+            return map_ptr->data.at(key);
+        }
+        else {
+            // Key not found. Return a default value (0.0 or empty string).
+            return 0.0;
         }
     }
     if (token == Tokens::ID::C_LEFTBRACKET) {

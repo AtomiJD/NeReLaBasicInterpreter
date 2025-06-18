@@ -4,6 +4,7 @@
 #include "TextIO.hpp"
 #include "Error.hpp"
 #include "Types.hpp"
+#include "LocaleManager.hpp"
 #include <chrono>
 #include <cmath> // For sin, cos, etc.
 #include <conio.h>
@@ -68,6 +69,17 @@ std::string wildcard_to_regex(const std::string& wildcard) {
 // C++ Implementations of our Native BASIC Functions
 //=========================================================
 
+BasicValue builtin_setlocale(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+
+    std::string locale_name = to_string(args[0]);
+    LocaleManager::set_current_locale(locale_name); // Call the global manager
+
+    return false;
+}
 // --- String Functions ---
 
 // LEN(string_expression) or LEN(array_variable)
@@ -1651,6 +1663,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("RECT", -1, builtin_rect);     // <-- ADD THIS
     register_proc("CIRCLE", -1, builtin_circle); // <-- ADD THIS
 #endif
+    register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
     register_proc("LOCATE", 2, builtin_locate);
     register_proc("SLEEP", 1, builtin_sleep);   

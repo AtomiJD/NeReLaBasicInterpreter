@@ -12,6 +12,7 @@
 #include "Error.hpp"
 #include "Types.hpp"
 #include "TextEditor.hpp"
+#include "LocaleManager.hpp"
 
 
 namespace { // Use an anonymous namespace to keep this helper local to this file
@@ -136,14 +137,24 @@ std::string to_string(const BasicValue& val) {
             return arg ? "TRUE" : "FALSE";
         }
         else if constexpr (std::is_same_v<T, double>) {
-            std::string s = std::to_string(arg);
+            std::stringstream ss;
+            // Get the current locale from our global manager
+            ss.imbue(LocaleManager::get_current_locale());
+            ss << std::fixed << std::setprecision(6) << arg;
+
+            std::string s = ss.str();
             s.erase(s.find_last_not_of('0') + 1, std::string::npos);
-            if (s.back() == '.') { s.pop_back(); }
+            char decimal_point = std::use_facet<std::numpunct<char>>(LocaleManager::get_current_locale()).decimal_point();
+            if (!s.empty() && s.back() == decimal_point) {
+                s.pop_back();
+            }
             return s;
         }
         else if constexpr (std::is_same_v<T, int>) {
-            std::string s = std::to_string(arg);
-            return s;
+            std::stringstream ss;
+            ss.imbue(LocaleManager::get_current_locale());
+            ss << arg;
+            return ss.str();
         }
         else if constexpr (std::is_same_v<T, std::string>) {
             return arg;
@@ -161,6 +172,25 @@ std::string to_string(const BasicValue& val) {
             ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
             return ss.str();
         }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
+            // --- CASE for handling std::shared_ptr<Map> ---
+            if (!arg) {
+                return "<Null Map>";
+            }
+            if (arg->data.empty()) {
+                return "{}";
+            }
+            std::stringstream ss;
+            ss << "{ ";
+            for (auto it = arg->data.begin(); it != arg->data.end(); ++it) {
+                ss << "\"" << it->first << "\": " << to_string(it->second);
+                if (std::next(it) != arg->data.end()) {
+                    ss << ", ";
+                }
+            }
+            ss << " }";
+            return ss.str();
+        }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
             if (!arg) {
                 return "<Null Array>";
@@ -175,47 +205,7 @@ std::string to_string(const BasicValue& val) {
 }
 
 void print_value(const BasicValue& val) {
-    // For arrays, we just want to print their string representation.
-    // For all other types, we can use the existing logic.
-    if (std::holds_alternative<std::shared_ptr<Array>>(val)) {
-        TextIO::print(to_string(val));
-        return;
-    }
-
-    std::visit([](auto&& arg) {
-        using T = std::decay_t<decltype(arg)>;
-        if constexpr (std::is_same_v<T, bool>) {
-            TextIO::print(arg ? "TRUE" : "FALSE");
-        }
-        else if constexpr (std::is_same_v<T, double>) {
-            // Convert double to string for printing
-            std::string s = std::to_string(arg);
-            // Remove trailing zeros
-            s.erase(s.find_last_not_of('0') + 1, std::string::npos);
-            // Remove trailing decimal point if it exists
-            if (s.back() == '.') {
-                s.pop_back();
-            }
-            TextIO::print(s);
-        }
-        else if constexpr (std::is_same_v<T, int>) {
-            // Convert int to string for printing
-            std::string s = std::to_string(arg);
-            TextIO::print(s);
-        }
-        else if constexpr (std::is_same_v<T, DateTime>) {
-            // Logic to print DateTime
-            auto tp = arg.time_point;
-            auto in_time_t = std::chrono::system_clock::to_time_t(tp);
-            std::stringstream ss;
-#pragma warning(suppress : 4996)
-            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
-            TextIO::print(ss.str());
-        }
-        else if constexpr (std::is_same_v<T, std::string>) { 
-            TextIO::print(arg);
-        }
-        }, val);
+    TextIO::print(to_string(val));
 }
 
 void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& name) {
@@ -320,45 +310,45 @@ void Commands::do_dim(NeReLaBasic& vm) {
             Error::set(1, vm.runtime_current_line); return;
         }
 
-        Tokens::ID type_name_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-        if (type_name_token != Tokens::ID::VARIANT && type_name_token != Tokens::ID::INT) {
-            Error::set(1, vm.runtime_current_line); return;
-        }
+        // Read the single token for the type name.
+        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
 
-        std::string type_name = to_upper(read_string(vm));
-        DataType declared_type;
+        // This is a temporary enum for internal logic, not to be confused with DataType in Types.hpp
+        enum class DeclaredType { T_INT, T_DBL, T_STR, T_DATE, T_BOOL, T_MAP, T_UNKNOWN };
+        DeclaredType declared_type = DeclaredType::T_UNKNOWN;
+        BasicValue default_value;
 
-        if (type_name == "INTEGER") {
-            declared_type = DataType::INTEGER;
-        }
-        else if (type_name == "DOUBLE") {
-            declared_type = DataType::DOUBLE;
-        }
-        else if (type_name == "STRING") {
-            declared_type = DataType::STRING;
-        }
-        else if (type_name == "DATE") {
-            declared_type = DataType::DATETIME;
-        }
-        else if (type_name == "BOOLEAN" || type_name == "BOOL") {
-            declared_type = DataType::BOOL;
-        }
-        else {
-            Error::set(1, vm.runtime_current_line); // Syntax Error: Unknown type
+        // Use a switch on the token ID, which is fast and robust.
+        switch (type_token) {
+        case Tokens::ID::INT:
+            declared_type = DeclaredType::T_INT;
+            default_value = 0;
+            break;
+        case Tokens::ID::DOUBLE:
+            declared_type = DeclaredType::T_DBL;
+            default_value = 0.0;
+            break;
+        case Tokens::ID::STRTYPE:
+            declared_type = DeclaredType::T_STR;
+            default_value = std::string("");
+            break;
+        case Tokens::ID::DATE:
+            declared_type = DeclaredType::T_DATE;
+            default_value = DateTime{};
+            break;
+        case Tokens::ID::BOOL:
+            declared_type = DeclaredType::T_BOOL;
+            default_value = false;
+            break;
+        case Tokens::ID::MAP:
+            declared_type = DeclaredType::T_MAP;
+            default_value = std::make_shared<Map>();
+            break;
+        default:
+            Error::set(1, vm.runtime_current_line); // Syntax Error: Unknown or invalid type name
             return;
         }
 
-        vm.variable_types[var_name] = declared_type;
-
-        BasicValue default_value;
-        switch (declared_type) {
-        case DataType::INTEGER:  default_value = 0; break;
-        case DataType::DOUBLE:   default_value = 0.0; break;
-        case DataType::STRING:   default_value = std::string(""); break;
-        case DataType::BOOL:     default_value = false; break;
-        case DataType::DATETIME: default_value = DateTime{}; break;
-        default:                 default_value = 0.0; break;
-        }
         set_variable(vm, var_name, default_value);
     }
 }
@@ -515,7 +505,38 @@ void Commands::do_let(NeReLaBasic& vm) {
             Error::set(10, vm.runtime_current_line); // Bad subscript
         }
     }
-    // --- Case 2: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
+    // --- Case 2: MAP ASSIGNMENT  ---
+    else if (var_type_token == Tokens::ID::MAP_ACCESS) { 
+        // Handle map assignment: my_map{"key"} = value
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTBRACE) {
+            Error::set(1, vm.runtime_current_line); return;
+        }
+        // The key inside {} must be a string expression
+        BasicValue key_val = vm.evaluate_expression();
+        if (Error::get() != 0) return;
+        std::string key = to_string(key_val);
+
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACE) {
+            Error::set(1, vm.runtime_current_line); return;
+        }
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
+            Error::set(1, vm.runtime_current_line); return;
+        }
+
+        BasicValue value_to_assign = vm.evaluate_expression();
+        if (Error::get() != 0) return;
+
+        BasicValue& map_var = get_variable(vm, name);
+        if (!std::holds_alternative<std::shared_ptr<Map>>(map_var)) {
+            Error::set(15, vm.runtime_current_line); return;
+        }
+        const auto& map_ptr = std::get<std::shared_ptr<Map>>(map_var);
+        if (!map_ptr) { Error::set(15, vm.runtime_current_line); return; }
+
+        // Perform the map insertion/update
+        map_ptr->data[key] = value_to_assign;
+    }
+    // --- Case 3: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
     else {
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;

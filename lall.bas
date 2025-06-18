@@ -1,37 +1,19 @@
-Dim o_map[20]
+' --- Map Data Type Test ---
 
-s_map = [1,5,8,7,45,66,12]
+DIM person AS MAP
 
-sub printresult(result)
-   for i = 0 to len(result)-1
-       if result[i]>0 then
-           print result[i], " ";
-       endif
-   next i
-print
-endsub
+PRINT "Assigning values to the map..."
+person{"name"} = "John Doe"
+person{"age"} = 42
+person{"city"} = "New York"
+person{"verified"} = TRUE
 
-func iseven(a)
-   if a mod 2 = 0 then
-      r=1
-   else
-      r=0
-   endif
-   return r
-endfunc
+PRINT "The complete map is: "; person
+PRINT ""
+PRINT "Accessing individual values:"
+PRINT "Name: "; person{"name"}
+PRINT "Age: "; person{"age"}
 
-func filter(fu,in[],out[])
-   j=0
-   for i = 0 to len(in) - 1
-      m=fu(in[i])
-      if m = 1 then
-         out[j]=in[i]
-         j=j+1
-      endif
-   next i
-endfunc
-
-filter(iseven@,s_map,o_map)
-
-print "Result filter: "
-printresult o_map
+' Update a value
+person{"age"} = person{"age"} + 1
+PRINT "New Age: "; person{"age"}

@@ -5,9 +5,11 @@
 #include <vector>     
 #include <numeric>    // for std::accumulate
 #include <stdexcept>  // for exceptions
+#include <map>
 
 // Forward-declare the Array struct so BasicValue can know it exists.
 struct Array;
+struct Map;
 
 // An enum to represent the declared type of a variable.
 enum class DataType {
@@ -16,7 +18,8 @@ enum class DataType {
     INTEGER,
     DOUBLE,
     STRING,
-    DATETIME
+    DATETIME,
+    MAP
 };
 
 // A struct to hold our date/time value, based on std::chrono.
@@ -41,7 +44,7 @@ struct FunctionRef {
 };
 
 // --- Use a std::shared_ptr to break the circular dependency ---
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>>;
 
 
 // --- A structure to represent N-dimensional arrays ---
@@ -80,6 +83,11 @@ struct Array {
 
     // This lets std::variant compare it if needed.
     bool operator==(const Array&) const = default;
+};
+
+// --- A structure to represent a Map (associative array) ---
+struct Map {
+    std::map<std::string, BasicValue> data;
 };
 
 //==============================================================================

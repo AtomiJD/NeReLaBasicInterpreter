@@ -105,7 +105,7 @@ public:
 
     // -- - Symbol Tables for Variables-- -
     std::unordered_map<std::string, BasicValue> variables;
-    std::unordered_map<std::string, DataType> variable_types;
+    //std::unordered_map<std::string, DataType> variable_types;
 
     std::unordered_map<std::string, uint16_t> label_addresses;
 

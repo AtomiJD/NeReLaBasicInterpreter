@@ -143,6 +143,7 @@
     <ClCompile Include="Commands.cpp" />
     <ClCompile Include="Error.cpp" />
     <ClCompile Include="Graphics.cpp" />
+    <ClCompile Include="LocaleManager.cpp" />
     <ClCompile Include="NeReLaBasic.cpp" />
     <ClCompile Include="NeReLaBasicInterpreter.cpp" />
     <ClCompile Include="Statements.cpp" />
@@ -155,6 +156,7 @@
     <ClInclude Include="Commands.hpp" />
     <ClInclude Include="Error.hpp" />
     <ClInclude Include="Graphics.hpp" />
+    <ClInclude Include="LocaleManager.hpp" />
     <ClInclude Include="NeReLaBasic.hpp" />
     <ClInclude Include="Statements.hpp" />
     <ClInclude Include="StringUtils.hpp" />
