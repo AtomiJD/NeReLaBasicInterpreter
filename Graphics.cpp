@@ -1,3 +1,4 @@
+#ifdef SDL3
 #include "Graphics.hpp"
 #include "TextIO.hpp"
 
@@ -114,3 +115,4 @@ void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, 
         SDL_RenderPoint(renderer, x, y);
     }
 }
+#endif

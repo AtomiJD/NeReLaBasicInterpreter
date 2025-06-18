@@ -1,4 +1,5 @@
 #pragma once
+#ifdef SDL3
 #include <SDL3/SDL.h>
 #include <string>
 #include <vector>
@@ -28,3 +29,4 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
 };
+#endif
