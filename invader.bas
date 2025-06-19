@@ -61,18 +61,22 @@ DIM FRAME AS INTEGER
 DIM SFRAME AS INTEGER
 
 REM --- SPRITE GRAPHICS ---
-DIM ALIEN_A1$ AS STRING
-DIM ALIEN_A2$ AS STRING
-DIM ALIEN_B1$ AS STRING
-DIM ALIEN_B2$ AS STRING
-DIM ALIEN_C1$ AS STRING
-DIM ALIEN_C2$ AS STRING
-DIM PLAYER$ AS STRING
-DIM P_MISSILE$ AS STRING
-DIM A_MISSILE$ AS STRING
-DIM BLOCK_A$ AS STRING
-DIM BLOCK_B$ AS STRING
-DIM BLOCK_C$ AS STRING
+DIM PLAYER_T[2]
+PLAYER_T[0] = " ▞▚ " ' Player, Line 0
+PLAYER_T[1] = "▛▀▀▜" ' Player, Line 1
+
+' Define Block Sprites as 2-line arrays
+DIM BLOCK_A_T[2]
+BLOCK_A_T[0] = "▗▇▇▖" ' Block A (Full), Line 0
+BLOCK_A_T[1] = "████" ' Block A (Full), Line 1
+
+DIM BLOCK_B_T[2]
+BLOCK_B_T[0] = "    " ' Block B (Half), Line 0 (top damaged)
+BLOCK_B_T[1] = "████" ' Block B (Half), Line 1 (bottom remains)
+
+DIM BLOCK_C_T[2]
+BLOCK_C_T[0] = "    " ' Block C (More Damaged), Line 0
+BLOCK_C_T[1] = "▚▞▚▞" ' Block C (More Damaged), Line 1
 
 DIM ALIEN_T[12]
 
@@ -109,7 +113,7 @@ REM ======================================================================
 
 SUB INIT_LEVEL()
     GAMEOVER = 0
-    SPEED = 20
+    SPEED = 6
     FRAME = 0
     SFRAME = 0
     
@@ -141,7 +145,7 @@ SUB INIT_LEVEL()
     
     REM --- CREATE BLOCKS ---
     FOR J = 0 TO 3
-        BX[J] = 12 + (I * 17)
+        BX[J] = 12 + (J * 17)
         BY[J] = 30
         BH[J] = 0
         BV[J] = 1
@@ -162,6 +166,7 @@ SUB INIT_LEVEL()
 ENDSUB
 
 SUB INIT_GAME()
+    OPTION "NOPAUSE"
     LIVES = 3
     SCORE = 0
     DIFFICULTY = 10
@@ -184,7 +189,7 @@ ENDSUB
 
 SUB PLAYER_DIE()
     PVIS = 0
-    PRES = 50 ' Respawn timer
+    PRES = 5 ' Respawn timer
     LIVES = LIVES - 1
     IF LIVES < 0 THEN 
        GAMEOVER = 2
@@ -325,21 +330,39 @@ REM ======================================================================
 REM RENDERING
 REM ======================================================================
 
-func part(sprite$, k)
-  if k = 0 then
-     r$=left$(sprite$,12)
-  else
-     r$=right$(sprite$,8)
-  endif
-  return r$
-endfunc
-
 sub print_alien(i, f, t)
     LOCATE AY[I], AX[I]
     print ALIEN_T[t*4+f*2]
     LOCATE AY[I]+1, AX[I]
     print ALIEN_T[t*4+1+f*2]
 endsub
+
+SUB PRINT_PLAYER()
+    LOCATE PY, PX
+    PRINT PLAYER_T[0]
+    LOCATE PY+1, PX
+    PRINT PLAYER_T[1]
+ENDSUB
+
+SUB PRINT_BLOCK(I, HITS)
+    LOCATE BY[I], BX[I]
+    IF HITS = 0 THEN
+        PRINT BLOCK_A_T[0]
+        LOCATE BY[I]+1, BX[I]
+        PRINT BLOCK_A_T[1]
+    ENDIF
+    IF HITS = 1 THEN
+        PRINT BLOCK_B_T[0]
+        LOCATE BY[I]+1, BX[I]
+        PRINT BLOCK_B_T[1]
+    ENDIF
+    IF HITS = 2 THEN
+        PRINT BLOCK_C_T[0]
+        LOCATE BY[I]+1, BX[I]
+        PRINT BLOCK_C_T[1]
+    ENDIF
+ENDSUB
+
 
 SUB RENDER_SCREEN()
     CLS
@@ -371,28 +394,18 @@ SUB RENDER_SCREEN()
     NEXT I
     
     REM -- DRAW BLOCKS --
-    COLOR 60, 0 ' Gray
-    FOR I = 0 TO MAX_BLOCKS - 1
-        IF BV[I] = 1 THEN
-            LOCATE BY[I], BX[I]
-            HITS = BH[I]
-            IF HITS = 0 THEN 
-		PRINT BLOCK_A$;
-	    ENDIF
-            IF HITS = 1 THEN 
-		PRINT BLOCK_B$;
-	    ENDIF
-            IF HITS = 2 THEN 
-		PRINT BLOCK_C$;
-	    ENDIF
+    COLOR 1, 0 ' Gray
+    FOR I = 0 TO MAX_BLOCKS - 1 
+        IF BV[I] = 1 THEN 
+            HITS = BH[I] 
+            PRINT_BLOCK I, HITS 
         ENDIF
-    NEXT I
+    NEXT I 
 
     REM -- DRAW PLAYER --
     IF PVIS = 1 THEN
         COLOR 4, 0 ' Blue
-        LOCATE PY, PX
-	PRINT PLAYER$;
+	PRINT_PLAYER 
     ENDIF
     
     REM -- DRAW MISSILES --
@@ -432,7 +445,7 @@ SUB GAME_LOOP()
 MAIN_LOOP:
     
     K$ = INKEY$()
-    IF K$ = "z" THEN 
+    IF K$ = "z" or asc(k$) = 27 THEN 
 	GOTO END_GAME
     ENDIF
     IF GAMEOVER > 0 THEN

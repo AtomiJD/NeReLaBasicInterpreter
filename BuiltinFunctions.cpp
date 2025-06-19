@@ -1378,6 +1378,36 @@ BasicValue builtin_cursor(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false;
 }
 
+BasicValue builtin_option(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+
+    std::string option_str = to_upper(to_string(args[0])); // Convert argument to uppercase string
+
+    if (option_str == "NOPAUSE") {
+        vm.nopause_active = true; // Set the flag in the VM
+        TextIO::print("OPTION NOPAUSE is active. Break/Pause disabled.\n"); // Optional feedback
+    }
+    else if (option_str == "PAUSE") { // Optional: allow turning pause back on
+        vm.nopause_active = false;
+        TextIO::print("OPTION PAUSE is active. Break/Pause enabled.\n");
+    }
+    // Add more else if blocks here for future options, e.g.:
+    // else if (option_str == "GRAPHICSON") {
+    //     // vm.graphics_enabled = true;
+    // }
+    // else if (option_str == "FASTIO") {
+    //     // vm.fast_io_mode = true;
+    // }
+    else {
+        Error::set(1, vm.runtime_current_line); // Syntax Error: Unknown OPTION
+    }
+
+    return false; // Procedures return a dummy value
+}
+
 // --- Filesystem ---
 // DIR [path_string]
 BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1829,7 +1859,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
     register_proc("LOCATE", 2, builtin_locate);
-    register_proc("SLEEP", 1, builtin_sleep);   
+    register_proc("SLEEP", 1, builtin_sleep);  
+    register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);
 
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument

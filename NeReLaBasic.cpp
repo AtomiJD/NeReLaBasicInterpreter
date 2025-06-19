@@ -1034,19 +1034,21 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
             }
         }
 #endif
-        if (_kbhit()) {
-            char key = _getch(); // Get the pressed key
+        if (!nopause_active) { // Only process input if NOPAUSE is NOT active
+            if (_kbhit()) {
+                char key = _getch(); // Get the pressed key
 
-            // The ESC key has an ASCII value of 27
-            if (key == 27) {
-                TextIO::print("\n--- BREAK ---\n");
-                break;                   // Exit the loop immediately
-            }
-            // Let's use the spacebar to pause
-            else if (key == ' ') {
-                TextIO::print("\n--- PAUSED (Press any key to resume) ---\n");
-                _getch(); // Wait for another key press to un-pause
-                TextIO::print("--- RESUMED ---\n");
+                // The ESC key has an ASCII value of 27
+                if (key == 27) {
+                    TextIO::print("\n--- BREAK ---\n");
+                    break;                   // Exit the loop immediately
+                }
+                // Let's use the spacebar to pause
+                else if (key == ' ') {
+                    TextIO::print("\n--- PAUSED (Press any key to resume) ---\n");
+                    _getch(); // Wait for another key press to un-pause
+                    TextIO::print("--- RESUMED ---\n");
+                }
             }
         }
         // Use the active_p_code pointer to access the bytecode

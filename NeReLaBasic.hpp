@@ -29,6 +29,7 @@ public:
     uint8_t bgcolor = 0;
     uint8_t trace = 0;
     bool is_stopped = false;
+    bool nopause_active = false; // Set to true by OPTION "NOPAUSE", disables ESC/Spacebar break/pause
 
     uint16_t runtime_current_line = 0;
     uint16_t current_source_line = 0;
