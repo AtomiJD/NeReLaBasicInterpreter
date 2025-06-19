@@ -1424,6 +1424,16 @@ BasicValue NeReLaBasic::parse_primary() {
         std::string var_or_qual_name = read_string(*this); // Reads "VARNAME" or "VARNAME.MEMBER" or "MODULE.FUNC"
 
 #ifdef JDCOM
+        if (active_function_table->count(to_upper(var_or_qual_name))) {
+            // If it's recognized as a function name (e.g., "MATH.ADD" or a simple "MyFunc"),
+            // but is not followed by a C_LEFTPAREN (which would be handled by CALLFUNC token),
+            // then it's an error. Or, perhaps it's a FUNCREF if that's the intent.
+            // For now, if it's a function name here, but not a CALLFUNC token, it's problematic.
+            // Let's assume CALLFUNC is the ONLY way function calls are triggered for expressions.
+            // If this path is hit, it implies trying to use a function name as a variable.
+            // So, for now, let it fall through to get_variable().
+            // This is complex, but the `CALLFUNC` token will ensure proper dispatch.
+        }
         size_t dot_pos = var_or_qual_name.find('.');
         if (dot_pos != std::string::npos) {
             // We have a qualified name: "objOrModule.member"
@@ -1455,8 +1465,7 @@ BasicValue NeReLaBasic::parse_primary() {
             // For example, your `get_variable` might already handle module-qualified names if `variables` is global.
             // If `get_variable` doesn't handle module prefixes, you'd need to expand that logic.
             // For now, assuming your `get_variable` correctly fetches the module-qualified function reference.
-            else
-                if (active_function_table->count(to_upper(var_or_qual_name))) {
+            else {
                 // It's a module.function or module.variable that isn't a COM object.
                 // This will then fall through to the CALLFUNC handler or variable lookup.
                 // This path implies that module functions are explicitly handled elsewhere,
@@ -1464,9 +1473,6 @@ BasicValue NeReLaBasic::parse_primary() {
                 // For direct variable lookup like `MODULE.VAR`, `get_variable` needs to handle it.
                 // Given your current `get_variable` relies on `variables` map, if module variables
                 // are directly in there, it will work. Otherwise, more logic needed.
-                return get_variable(*this, to_upper(var_or_qual_name));
-            }
-            else {
                 Error::set(3, runtime_current_line); // Variable not found or unknown module member
                 return false;
             }
@@ -1595,6 +1601,28 @@ BasicValue NeReLaBasic::parse_primary() {
             std::string obj_var_name = identifier_being_called.substr(0, dot_pos);
             std::string member_name = identifier_being_called.substr(dot_pos + 1); // e.g., "Sheets" or "Cells"
 
+            // First, try to find it in the current function table (for module functions like MATH.ADD)
+            // This needs to be checked BEFORE trying to interpret it as a COM object.
+            if (active_function_table->count(identifier_being_called)) {
+                // It's a module function or a higher-order function reference.
+                // Delegate to the common BASIC function execution logic.
+                const auto& func_info = active_function_table->at(identifier_being_called);
+                std::vector<BasicValue> args;
+                // Parse arguments (identical to existing logic below)
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return false; }
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                    while (true) {
+                        args.push_back(evaluate_expression()); if (Error::get() != 0) return false;
+                        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                        if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; } pcode++;
+                    }
+                }
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) { Error::set(18, runtime_current_line); return false; }
+                else pcode++; // Consume ')'
+                if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return false; }
+                return execute_function_for_value(func_info, args);
+            }
             BasicValue& com_obj_val = get_variable(*this, to_upper(obj_var_name));
             if (!std::holds_alternative<ComObject>(com_obj_val)) {
                 Error::set(15, runtime_current_line); // Type Mismatch: Not a COM object

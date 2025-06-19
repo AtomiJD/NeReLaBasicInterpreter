@@ -498,10 +498,7 @@ void Commands::do_let(NeReLaBasic& vm) {
             if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
             vm.pcode++;
         }
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-            Error::set(16, vm.runtime_current_line); return;
-        } else
-            vm.pcode++; // Consume ']'
+        vm.pcode++; 
 
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
