@@ -25,7 +25,7 @@ namespace Tokens {
         FALSE = 0x0F,
         DO = 0x10,
         WHILE = 0x11,
-        REPEAT = 0x12,
+        LOOP = 0x12,
         UNTIL = 0x13,
         DIM = 0x14,
         AS = 0x15,

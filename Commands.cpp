@@ -478,7 +478,10 @@ void Commands::do_let(NeReLaBasic& vm) {
             if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
             vm.pcode++;
         }
-        vm.pcode++; // Consume ']'
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+            Error::set(16, vm.runtime_current_line); return;
+        } else
+            vm.pcode++; // Consume ']'
 
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
@@ -940,6 +943,82 @@ void Commands::do_resume(NeReLaBasic& vm) {
     // The main execution loop will then continue from the new vm.pcode value.
 }
 
+void Commands::do_do(NeReLaBasic& vm) {
+    // Peek the next byte to see if it's a WHILE or UNTIL token.
+    Tokens::ID next_byte_as_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]); // Consume WHILE/UNTIL token
+
+    if (next_byte_as_token == Tokens::ID::WHILE || next_byte_as_token == Tokens::ID::UNTIL) {
+        // This is a pre-test loop.
+        Tokens::ID condition_type = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]); 
+
+        // Read the 2-byte jump-past-loop address (this was the placeholder the compiler reserved)
+        uint16_t jump_target_if_false = (*vm.active_p_code)[vm.pcode] | ((*vm.active_p_code)[vm.pcode + 1] << 8);
+        vm.pcode += 2; // Consume the 2 bytes of the target address
+
+        BasicValue condition_result = vm.evaluate_expression();
+        if (Error::get() != 0) return;
+
+        bool condition_met = to_bool(condition_result);
+        bool should_jump_past_loop = false;
+
+        if (condition_type == Tokens::ID::WHILE) {
+            should_jump_past_loop = !condition_met; // Jump if WHILE condition is FALSE
+        }
+        else { // UNTIL
+            should_jump_past_loop = condition_met;  // Jump if UNTIL condition is TRUE
+        }
+
+        if (should_jump_past_loop) {
+            vm.pcode = jump_target_if_false; // Jump past the entire loop
+        }
+        // If not jumping, execution continues into the loop body
+    }
+    // If it's not WHILE/UNTIL, it's an unconditional DO or a post-test DO.
+    // Execution simply falls through to the loop body.
+}
+
+void Commands::do_loop(NeReLaBasic& vm) {
+    Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (token == Tokens::ID::WHILE || token == Tokens::ID::UNTIL) //skip token WHILE/UNTIL
+        vm.pcode++;
+
+    // Read the loop metadata written by the tokenizer
+    bool is_pre_test = static_cast<bool>((*vm.active_p_code)[vm.pcode++]);
+    Tokens::ID condition_type = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+    uint16_t loop_start_pcode_addr = (*vm.active_p_code)[vm.pcode] | ((*vm.active_p_code)[vm.pcode + 1] << 8);
+    vm.pcode += 2;
+
+    // For pre-test loops, the patching was done at compile time.
+    // So if it's a pre-test loop, we don't need to read an extra 2 bytes here.
+    // The previous 'do_do' already handled the conditional jump.
+    // This 'do_loop' for a pre-test only needs to jump back unconditionally.
+
+    bool should_jump_back = true; // Default for DO...LOOP and DO WHILE/UNTIL...LOOP
+
+    if (!is_pre_test && condition_type != Tokens::ID::NOCMD) { // This is a post-test loop (DO...LOOP WHILE/UNTIL)
+        BasicValue condition_result = vm.evaluate_expression();
+        if (Error::get() != 0) return;
+
+        bool condition_met = to_bool(condition_result);
+
+        if (condition_type == Tokens::ID::WHILE) {
+            should_jump_back = condition_met; // Jump back if WHILE condition is TRUE
+        }
+        else { // UNTIL
+            should_jump_back = !condition_met; // Jump back if UNTIL condition is FALSE
+        }
+    }
+    // If it's an unconditional DO...LOOP or a pre-test loop, `should_jump_back` remains true.
+
+    if (should_jump_back) {
+        vm.pcode = loop_start_pcode_addr; // Jump back to the start of the loop body
+    }
+    else {
+        // Loop finished for a post-test loop, or pre-test loop already handled the jump.
+        // Execution simply falls through to the next statement after LOOP.
+    }
+}
+
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;
 
@@ -1071,6 +1150,17 @@ void Commands::do_stop(NeReLaBasic& vm) {
 void Commands::do_run(NeReLaBasic& vm) {
 
     do_compile(vm);
+    if (!vm.do_loop_stack.empty()) {
+        // There are unclosed DO loops. Get the line number of the last one.
+        uint16_t error_line = vm.do_loop_stack.back().source_line;
+        Error::set(14, error_line); // Unclosed loop
+    }
+    if (!vm.if_stack.empty()) {
+        // There are unclosed Ifs. Get the line number of the last one.
+        uint16_t error_line = vm.if_stack.back().source_line;
+        Error::set(4, error_line); // Unclosed for
+    }
+
     if (Error::get() != 0) {
         Error::print();
         return;

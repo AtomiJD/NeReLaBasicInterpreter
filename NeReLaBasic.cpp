@@ -118,11 +118,6 @@ void NeReLaBasic::init_screen() {
 void NeReLaBasic::init_system() {
     // Let's set the program start memory location, as in the original.
     pcode = 0;
-
-    TextIO::print("Prog start:   ");
-    TextIO::print_uwhex(pcode);
-    TextIO::nl();
-
     trace = 0;
 
     TextIO::print("Trace is:  ");
@@ -337,12 +332,14 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             if (lineinput[prgptr + 1] == '>') { prgptr += 2; return Tokens::ID::C_NE; }
             if (lineinput[prgptr + 1] == '=') { prgptr += 2; return Tokens::ID::C_LE; }
         }
-        prgptr++; return Tokens::ID::C_LT;
+        prgptr++; 
+        return Tokens::ID::C_LT;
     case '>':
         if (prgptr + 1 < lineinput.length() && lineinput[prgptr + 1] == '=') {
             prgptr += 2; return Tokens::ID::C_GE;
         }
-        prgptr++; return Tokens::ID::C_GT;
+        prgptr++; 
+        return Tokens::ID::C_GT;
     }
 
     // Handle all other single-character tokens
@@ -379,6 +376,10 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
     bool is_start_of_statement = true;
     bool is_one_liner_if = false;
+
+    // Variables to track DO/LOOP specific state for the current line
+    bool encountered_do_on_line = false;
+    bool encountered_loop_on_line = false;
 
     // Single loop to process all tokens on the line.
     while (prgptr < lineinput.length()) {
@@ -667,6 +668,106 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             // If no argument (simple RESUME), nothing more needs to be written to pcode.
             continue;
         }
+        case Tokens::ID::DO: {
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            DoLoopInfo info;
+            info.source_line = lineNumber;
+            info.loop_start_pcode_addr = out_p_code.size() - 1; // Start of loop body (after DO token)
+
+            // Peek for WHILE/UNTIL condition after DO
+            size_t original_prgptr_before_peek = prgptr;
+            Tokens::ID next_token_peek = parse(*this, false);
+            prgptr = original_prgptr_before_peek; // Reset
+
+            if (next_token_peek == Tokens::ID::WHILE || next_token_peek == Tokens::ID::UNTIL) {
+                info.is_pre_test = true;
+                info.condition_type = next_token_peek;
+
+                // Write the WHILE/UNTIL token (for runtime to evaluate condition)
+                out_p_code.push_back(static_cast<uint8_t>(next_token_peek));
+                parse(*this, false); // Consume WHILE/UNTIL keyword
+
+                // Write 2-byte placeholder for jump-past-loop.
+                // This will be patched by the corresponding LOOP.
+                info.condition_pcode_addr = out_p_code.size(); // Address of this placeholder 
+                out_p_code.push_back(0); // Placeholder byte 1 (LSB)
+                out_p_code.push_back(0); // Placeholder byte 2 (MSB)
+
+                do_loop_stack.push_back(info);
+            }
+            else {
+                // Simple DO loop (no condition or post-test condition)
+                info.is_pre_test = false;
+                info.condition_type = Tokens::ID::NOCMD;
+                info.condition_pcode_addr = 0; // Not applicable for this type of DO
+
+                do_loop_stack.push_back(info);
+            }
+            continue;
+        }
+
+        case Tokens::ID::LOOP: {
+            // First, write the LOOP token.
+            out_p_code.push_back(static_cast<uint8_t>(token));
+
+            if (do_loop_stack.empty()) {
+                Error::set(14, lineNumber); // Unclosed loop / LOOP without DO
+                return 1;
+            }
+            DoLoopInfo current_do_loop_info = do_loop_stack.back();
+            do_loop_stack.pop_back();
+
+            // Peek for WHILE/UNTIL after LOOP
+            size_t original_prgptr_before_peek = prgptr;
+            Tokens::ID next_token_peek = parse(*this, false);
+            prgptr = original_prgptr_before_peek; // Reset
+
+            if (next_token_peek == Tokens::ID::WHILE || next_token_peek == Tokens::ID::UNTIL) {
+                // This is a post-test loop.
+                if (current_do_loop_info.is_pre_test) {
+                    Error::set(1, lineNumber); // Syntax Error: Condition on both DO and LOOP
+                    return 1;
+                }
+                current_do_loop_info.is_pre_test = false; // Confirm it's post-test
+                current_do_loop_info.condition_type = next_token_peek;
+
+                // Write the WHILE/UNTIL token (for runtime to evaluate condition)
+                out_p_code.push_back(static_cast<uint8_t>(next_token_peek));
+                parse(*this, false); // Consume WHILE/UNTIL keyword
+            }
+            // If no condition, condition_type remains NOCMD.
+
+            // Write the loop metadata for runtime (is_pre_test, condition_type, loop_start_pcode_addr)
+            out_p_code.push_back(static_cast<uint8_t>(current_do_loop_info.is_pre_test));
+            out_p_code.push_back(static_cast<uint8_t>(current_do_loop_info.condition_type)); // This will be NOCMD if no explicit condition
+            out_p_code.push_back(current_do_loop_info.loop_start_pcode_addr & 0xFF);
+            out_p_code.push_back((current_do_loop_info.loop_start_pcode_addr >> 8) & 0xFF);
+
+            // *** CRITICAL PATCHING STEP ***
+            // If this was a pre-test loop (DO WHILE/UNTIL), its placeholder for jumping *past* the loop
+            // needs to be patched *now* to point to the instruction *after* the LOOP statement.
+            if (current_do_loop_info.is_pre_test && current_do_loop_info.condition_pcode_addr != 0) {
+                uint16_t jump_target = out_p_code.size(); // The address immediately after this LOOP
+                out_p_code[current_do_loop_info.condition_pcode_addr] = jump_target & 0xFF;
+                out_p_code[current_do_loop_info.condition_pcode_addr + 1] = (jump_target >> 8) & 0xFF;
+            }
+            continue;
+        }
+        case Tokens::ID::WHILE:
+        case Tokens::ID::UNTIL:
+            // These tokens are only consumed if they directly follow DO or LOOP.
+            // If they appear elsewhere, it's a syntax error or part of an expression.
+            // The `parse` method should return these as keywords if encountered standalone.
+            // For DO/LOOP, they are handled in the DO/LOOP cases above.
+            // If this is reached, it means WHILE/UNTIL is not correctly placed.
+            // However, they *can* be part of an expression (e.g. `IF x WHILE y THEN`).
+            // To clarify, this assumes they are *only* used with DO/LOOP.
+            // If used in expressions, this case will require further logic.
+            // For now, let's assume they are handled by their parent DO/LOOP.
+            // If they appear here, it implies a syntax error.
+            Error::set(1, lineNumber); // Syntax Error: WHILE/UNTIL out of place
+            return 1;
+
         case Tokens::ID::NEXT: {
             // Write the NEXT token to the P-Code. This is all the runtime needs.
             out_p_code.push_back(static_cast<uint8_t>(token));
@@ -1136,6 +1237,14 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_resume(*this);
         break;
+    case Tokens::ID::LOOP:
+        pcode++;
+        Commands::do_loop(*this);
+        break;
+    case Tokens::ID::DO:
+        pcode++;
+        Commands::do_do(*this);
+        break;
 
     case Tokens::ID::EDIT:
         pcode++;
@@ -1228,7 +1337,10 @@ BasicValue NeReLaBasic::parse_array_literal() {
             pcode++;
         }
     }
-    pcode++; // Consume ']'
+    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+        Error::set(16, runtime_current_line); return false;
+    } else
+        pcode++; // Consume ']'
 
     // --- Now, construct the Array object from the parsed elements ---
     auto new_array_ptr = std::make_shared<Array>();
@@ -1399,10 +1511,6 @@ BasicValue NeReLaBasic::parse_primary() {
         pcode++;
         return result;
     }
-    //if (token == Tokens::ID::NOT) {
-    //    pcode++;
-    //    return !to_bool(parse_primary());
-    //}
     if (token == Tokens::ID::CALLFUNC) {
         pcode++; // Consume CALLFUNC token
         std::string identifier_being_called = to_upper(read_string(*this));
@@ -1440,7 +1548,10 @@ BasicValue NeReLaBasic::parse_primary() {
                 pcode++;
             }
         }
-        pcode++; // Consume ')'
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            Error::set(18, runtime_current_line); return false;
+        } else
+            pcode++; // Consume ')'
 
         if (func_info.arity != -1 && args.size() != func_info.arity) {
             Error::set(26, runtime_current_line); return false;

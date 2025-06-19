@@ -77,6 +77,15 @@ public:
         FunctionTable function_table;
     };
 
+    // --- For DO...LOOP Stack ---
+    struct DoLoopInfo {
+        uint16_t loop_start_pcode_addr; // Address of the 'DO' token (or statement after it)
+        uint16_t condition_pcode_addr;  // Address where the condition is (for pre-test loops)
+        bool is_pre_test;               // True if WHILE/UNTIL is with DO, false if with LOOP
+        Tokens::ID condition_type;      // WHILE or UNTIL
+        uint16_t source_line;           // For error reporting
+    };
+
     // This table will hold our built-in constants like 'vbNewLine' and 'PI'
     std::map<std::string, BasicValue> builtin_constants;
 
@@ -88,6 +97,7 @@ public:
 
     std::vector<IfStackInfo> if_stack;
     std::vector<ForLoopInfo> for_stack;
+    std::vector<DoLoopInfo> do_loop_stack;
 
     //std::unordered_map<std::string, FunctionInfo> function_table;
     std::vector<StackFrame> call_stack;
