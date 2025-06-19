@@ -88,6 +88,7 @@ namespace Tokens {
         C_LEFTBRACE = 0x52,  
         C_RIGHTBRACE = 0x53, 
         MAP_ACCESS = 0x54,
+        ONERRORCALL = 0x55,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

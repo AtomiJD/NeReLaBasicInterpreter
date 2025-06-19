@@ -62,6 +62,7 @@ namespace {
         {"STRING",  Tokens::ID::STRTYPE},
         {"STOP",    Tokens::ID::STOP},    
         {"RESUME",  Tokens::ID::RESUME},  
+        {"ON ERROR CALL", Tokens::ID::ONERRORCALL},
         // ... and so on for all your keywords.
     };
 } // end anonymous namespace

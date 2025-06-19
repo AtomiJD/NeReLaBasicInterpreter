@@ -118,7 +118,6 @@ void set_variable(NeReLaBasic& vm, const std::string& name, const BasicValue& va
         // Finally, if it's not in the local scope and not in the global scope,
         // it is a brand new variable, which we will define as local to the subroutine.
         vm.call_stack.back().local_variables[name] = value;
-
     }
     else {
         // Not in a subroutine, so it must be a global variable.
@@ -248,7 +247,6 @@ void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& 
         TextIO::nl();
     }
 }
-
 
 void Commands::do_dim(NeReLaBasic& vm) {
     Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
@@ -875,6 +873,72 @@ void Commands::do_endsub(NeReLaBasic& vm) {
     vm.call_stack.pop_back();
 }
 
+// This command will expect a function name string directly after it.
+void Commands::do_onerrorcall(NeReLaBasic& vm) {
+    // Read the function name from bytecode
+    std::string func_name = to_upper(read_string(vm)); // read_string handles pcode increment
+
+    // Check if the function actually exists
+    // (It must be a SUB, not a FUNC, as it's called as a procedure)
+    if (vm.main_function_table.count(func_name) && vm.main_function_table.at(func_name).is_procedure) {
+        vm.error_handler_function_name = func_name;
+        vm.error_handler_active = true;
+    }
+    else {
+        // Error if function not found or it's not a procedure (SUB)
+        Error::set(22, vm.runtime_current_line); // Undefined function
+    }
+}
+
+void Commands::do_resume(NeReLaBasic& vm) {
+    // Clear the error state in the Error module (so program can continue normally)
+    Error::clear();
+    vm.error_handler_active = false; // Deactivate handler after RESUME
+
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+    if (next_token == Tokens::ID::NEXT) {
+        vm.pcode++; // Consume NEXT token
+
+        // Restore the execution context exactly as it was before the error handler was called
+        vm.pcode = vm.resume_pcode; // Points to the line/statement that caused the error
+        // The main loop in execute() will then re-evaluate it and proceed.
+        vm.runtime_current_line = vm.resume_runtime_line;
+        vm.active_p_code = vm.resume_p_code_ptr;
+        vm.active_function_table = vm.resume_function_table_ptr;
+        vm.call_stack = vm.resume_call_stack_snapshot;
+        vm.for_stack = vm.resume_for_stack_snapshot;
+
+    }
+    else if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR) {
+        // Simple RESUME (like RESUME 0 or RESUME current line)
+        // Restore context as for RESUME NEXT
+        vm.pcode = vm.resume_pcode;
+        vm.runtime_current_line = vm.resume_runtime_line;
+        vm.active_p_code = vm.resume_p_code_ptr;
+        vm.active_function_table = vm.resume_function_table_ptr;
+        vm.call_stack = vm.resume_call_stack_snapshot;
+        vm.for_stack = vm.resume_for_stack_snapshot;
+
+    }
+    else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
+        vm.pcode++; // Consume STRING token
+        std::string target_label = read_string(vm);
+        if (vm.label_addresses.count(target_label)) {
+            vm.pcode = vm.label_addresses[target_label];
+            // For a GOTO-style resume, clear the stack to prevent unexpected returns
+            vm.call_stack.clear();
+            vm.for_stack.clear();
+        }
+        else {
+            Error::set(11, vm.runtime_current_line); // Undefined label
+        }
+    }
+    else {
+        Error::set(1, vm.runtime_current_line); // Syntax Error
+    }
+    // The main execution loop will then continue from the new vm.pcode value.
+}
 
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;

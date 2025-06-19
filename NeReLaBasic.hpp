@@ -120,6 +120,26 @@ public:
     Graphics graphics_system;
 #endif
 
+    // --- Error Handling State ---
+    bool error_handler_active = false;
+    std::string error_handler_function_name = ""; // Name of the function to call on error
+
+    // Context to return to after RESUME
+    // These will store the state *before* the error handler is invoked.
+    uint16_t resume_pcode = 0;
+    uint16_t resume_runtime_line = 0;
+    const std::vector<uint8_t>* resume_p_code_ptr = nullptr; // Raw pointer, assuming it points to active_p_code
+    NeReLaBasic::FunctionTable* resume_function_table_ptr = nullptr; // Raw pointer
+    std::vector<StackFrame> resume_call_stack_snapshot; // Snapshot of call stack for RESUME NEXT/0
+    std::vector<ForLoopInfo> resume_for_stack_snapshot; // Snapshot of FOR stack
+
+    // Flag to signal the main loop to jump to error handler
+    bool jump_to_error_handler = false;
+
+    // Built-in variables for error information (accessible in error handler)
+    BasicValue err_code = 0.0; // ERR
+    BasicValue erl_line = 0.0; // ERL
+
     // --- Member Functions ---
     NeReLaBasic(); // Constructor
     void start();  // The main REPL
@@ -151,3 +171,5 @@ private:
     // --- Execution Engine ---
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
 };
+
+extern NeReLaBasic* g_vm_instance_ptr;

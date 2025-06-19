@@ -16,7 +16,7 @@
 #include <algorithm> // for std::transform, std::find_if
 #include <cctype>    // for std::isspace, std::toupper
 
-const std::string NERELA_VERSION = "0.7";
+const std::string NERELA_VERSION = "0.7.2";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -87,8 +87,12 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     active_function_table = &main_function_table;
     register_builtin_functions(*this, *active_function_table);
     srand(static_cast<unsigned int>(time(nullptr)));
+
     builtin_constants["VBNEWLINE"] = std::string("\n");
     builtin_constants["PI"] = 3.14159265358979323846;
+    // Initialize ERR and ERL as global variables
+    builtin_constants["ERR"] = 0.0;
+    builtin_constants["ERL"] = 0.0;
 }
 
 bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
@@ -230,6 +234,21 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         buffer = lineinput.substr(num_start_pos, prgptr - num_start_pos);
         return Tokens::ID::NUMBER;
     }
+
+    // --- Prioritize Multi-Word Keywords (BEFORE single identifiers) ---
+    // This is a simple linear scan. For more keywords, consider a more efficient
+    // structure like a Trie or a specialized keyword matcher.
+
+    // Attempt to match "ON ERROR CALL"
+    if (prgptr + 13 <= lineinput.length() && // "ON ERROR CALL" is 13 chars long (including spaces)
+        StringUtils::to_upper(lineinput.substr(prgptr, 13)) == "ON ERROR CALL") {
+        buffer = "ON ERROR CALL"; // Store the full keyword
+        prgptr += 14;           // Advance past the keyword
+        return Tokens::ID::ONERRORCALL;
+    }
+    // Add other multi-word keywords here if you introduce them (e.g., "ON GOSUB")
+    // Example: if (prgptr + X <= lineinput.length() && StringUtils::to_upper(lineinput.substr(prgptr, X)) == "ANOTHER MULTI WORD KEYWORD") { ... }
+
 
     // Handle Identifiers (Variables, Keywords, Functions)
     if (StringUtils::isletter(currentChar)) {
@@ -447,7 +466,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             continue;
         }
 
-        // Handle ENDFUNC: pop the stored address and patch the jump offset.
+                             // Handle ENDFUNC: pop the stored address and patch the jump offset.
         case Tokens::ID::ENDFUNC: {
             out_p_code.push_back(static_cast<uint8_t>(token));
             if (!func_stack.empty()) {
@@ -467,28 +486,6 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             info.is_procedure = true;
             info.is_exported = is_exported; // Set the exported status!
             info.module_name = this->current_module_name;
-
-            // --- Use stringstream for robust parameter parsing ---
-            // Find the rest of the line after the procedure name.
- /*           std::string all_params_str = lineinput.substr(prgptr);
-            std::stringstream pss(all_params_str);
-            std::string param_buffer;
-
-            auto trim = [](std::string& s) {
-                s.erase(0, s.find_first_not_of(" \t\n\r"));
-                s.erase(s.find_last_not_of(" \t\n\r") + 1);
-                };*/
-
-            // Read from the string stream, using ',' as a delimiter.
-            //while (std::getline(pss, param_buffer, ',')) {
-            //    trim(param_buffer);
-            //    if (param_buffer.length() > 2 && param_buffer.substr(param_buffer.length() - 2) == "[]") {
-            //        param_buffer.resize(param_buffer.length() - 2);
-            //    }
-            //    if (!param_buffer.empty()) {
-            //        info.parameter_names.push_back(to_upper(param_buffer));
-            //    }
-            //}
 
             size_t open_paren = line.find('(', prgptr);
             size_t close_paren = line.rfind(')');
@@ -545,7 +542,7 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
             continue;
         }
         case Tokens::ID::GOTO: {
-                // Write the GOTO command token itself
+            // Write the GOTO command token itself
             out_p_code.push_back(static_cast<uint8_t>(token));
 
             // Immediately parse the next token on the line, which should be the label name
@@ -640,6 +637,34 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
             // The arguments inside (...) will be tokenized as a normal expression
             // by subsequent loops, which is what the evaluator expects.
+            continue;
+        }
+        case Tokens::ID::ONERRORCALL: {
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            parse(*this, is_start_of_statement); // Parse the next token which is the function name
+            for (char c : buffer) out_p_code.push_back(c);
+            out_p_code.push_back(0); // Null terminator for the function name
+            prgptr = lineinput.length(); // Consume rest of the line as it's just the function name
+            continue;
+        }
+        case Tokens::ID::RESUME: { // Handle RESUME arguments during tokenization
+            out_p_code.push_back(static_cast<uint8_t>(token));
+            // Peek to see if RESUME is followed by NEXT or a string (label)
+            size_t original_prgptr = prgptr; // Save for lookahead
+            Tokens::ID next_arg_token = parse(*this, false); // Parse without consuming
+            prgptr = original_prgptr; // Reset prgptr
+
+            if (next_arg_token == Tokens::ID::NEXT) {
+                parse(*this, false); // Consume NEXT
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NEXT));
+            }
+            else if (next_arg_token == Tokens::ID::STRING) {
+                parse(*this, false); // Consume STRING
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::STRING));
+                for (char c : buffer) out_p_code.push_back(c);
+                out_p_code.push_back(0); // Null terminator
+            }
+            // If no argument (simple RESUME), nothing more needs to be written to pcode.
             continue;
         }
         case Tokens::ID::NEXT: {
@@ -809,7 +834,6 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const st
     std::stringstream source_stream(source);
     current_source_line = 1;
     while (std::getline(source_stream, line)) {
-        //TextIO::print("C(" + std::to_string(current_source_line) + "): " + line + "\n");
         if (tokenize(line, current_source_line++, out_p_code, *target_func_table) != 0) {
             this->active_function_table = nullptr; // Reset on error
             return 1;
@@ -896,6 +920,7 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
     active_p_code = &code_to_run;
     pcode = 0;
     Error::clear();
+    g_vm_instance_ptr = this;
 
     // Main execution loop
     while (pcode < active_p_code->size()) {
@@ -923,7 +948,6 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
             }
         }
         // Use the active_p_code pointer to access the bytecode
-
         runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
         pcode += 2;
 
@@ -954,16 +978,50 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
             }
         }
 
-        if (Error::get() != 0 || is_stopped) {
-            break;
-        }
+        // --- Error handling ---
+        if (Error::get() != 0 && error_handler_active && jump_to_error_handler) {
+            jump_to_error_handler = false; // Reset the flag
+            // Clear the actual error code so ERR/ERL can be read by the handler
+            uint8_t caught_error_code = Error::get();
+            Error::clear();
 
-        // Check bounds before consuming C_CR
-        //if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
-        //    pcode++; // Consume the C_CR
-        //}
-        if (pcode < active_p_code->size() && (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD)) {
-            pcode++; // Consume the C_CR
+            // Invoke the error handling function (like a CALLSUB)
+            // You can re-use your do_callsub logic or call it directly:
+            if (active_function_table->count(error_handler_function_name)) {
+                const auto& proc_info = active_function_table->at(error_handler_function_name);
+                // Call the procedure without arguments (ERR and ERL are global vars)
+                NeReLaBasic::StackFrame frame;
+                frame.return_p_code_ptr = this->active_p_code;
+                frame.return_pcode = this->pcode;
+                frame.previous_function_table_ptr = this->active_function_table;
+                frame.for_stack_size_on_entry = this->for_stack.size();
+                // No args to pass if ERR and ERL are global
+                this->call_stack.push_back(frame);
+
+                if (!proc_info.module_name.empty() && compiled_modules.count(proc_info.module_name)) {
+                    auto& target_module = compiled_modules[proc_info.module_name];
+                    this->active_p_code = &target_module.p_code;
+                    this->active_function_table = &target_module.function_table;
+                }
+                this->pcode = proc_info.start_pcode; // Jump to start of error handler function
+                pcode++; // Consume the C_CR
+            }
+            else {
+                // If the error handler function is somehow not found at runtime,
+                // this is a fatal error, print the original error and stop.
+                Error::set(caught_error_code, runtime_current_line); // Re-set original error
+                Error::print();
+                break; // Stop execution
+            }
+            continue; // Continue execution loop from the new pcode (the error handler)
+        }
+        else {
+            if (Error::get() != 0 || is_stopped) {
+                break;
+            }
+            if (pcode < active_p_code->size() && (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD)) {
+                pcode++; // Consume the C_CR
+            }
         }
     }
 
@@ -974,6 +1032,8 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
 
     // Clear the pointer so it's not pointing to stale data
     active_p_code = prev_active_p_code;
+    // Clear the global VM pointer when execution finishes
+    g_vm_instance_ptr = nullptr;
 }
 
 void NeReLaBasic::statement() {
@@ -1067,6 +1127,14 @@ void NeReLaBasic::statement() {
     case Tokens::ID::CALLSUB:
         pcode++;
         Commands::do_callsub(*this);
+        break;
+    case Tokens::ID::ONERRORCALL:
+        pcode++;
+        Commands::do_onerrorcall(*this);
+        break;
+    case Tokens::ID::RESUME:
+        pcode++;
+        Commands::do_resume(*this);
         break;
 
     case Tokens::ID::EDIT:
