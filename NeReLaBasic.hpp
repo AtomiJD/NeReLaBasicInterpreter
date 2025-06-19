@@ -12,6 +12,7 @@
 #include "Graphics.hpp"
 #endif
 
+
 class NeReLaBasic {
 public:
     // --- Member Variables (Global State) ---
@@ -31,6 +32,7 @@ public:
 
     uint16_t runtime_current_line = 0;
     uint16_t current_source_line = 0;
+    uint16_t current_statement_start_pcode = 0; // Tracks the start of the current statement
 
     struct ForLoopInfo {
         std::string variable_name; // Name of the loop counter (e.g., "i")
@@ -136,6 +138,7 @@ public:
 
     // Context to return to after RESUME
     // These will store the state *before* the error handler is invoked.
+    uint16_t resume_pcode_next_statement = 0; // Where RESUME NEXT should jump
     uint16_t resume_pcode = 0;
     uint16_t resume_runtime_line = 0;
     const std::vector<uint8_t>* resume_p_code_ptr = nullptr; // Raw pointer, assuming it points to active_p_code

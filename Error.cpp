@@ -56,14 +56,15 @@ void Error::set(uint8_t errorCode, uint16_t lineNumber) {
             g_vm_instance_ptr->builtin_constants["ERR"] = g_vm_instance_ptr->err_code;
             g_vm_instance_ptr->builtin_constants["ERL"] = g_vm_instance_ptr->erl_line;
             // Save current context for RESUME
-            g_vm_instance_ptr->resume_pcode = g_vm_instance_ptr->pcode;
             g_vm_instance_ptr->resume_runtime_line = g_vm_instance_ptr->runtime_current_line;
-            // Store raw pointers, as active_p_code and active_function_table are already pointers
             g_vm_instance_ptr->resume_p_code_ptr = g_vm_instance_ptr->active_p_code;
             g_vm_instance_ptr->resume_function_table_ptr = g_vm_instance_ptr->active_function_table;
-            // Deep copy call stack and for stack
             g_vm_instance_ptr->resume_call_stack_snapshot = g_vm_instance_ptr->call_stack;
             g_vm_instance_ptr->resume_for_stack_snapshot = g_vm_instance_ptr->for_stack;
+
+            // The main execution loop will calculate resume_pcode_next_statement
+            // for RESUME NEXT. For simple RESUME (retry current), use current_statement_start_pcode.
+            g_vm_instance_ptr->resume_pcode = g_vm_instance_ptr->current_statement_start_pcode; // <<< NEW
 
             // Signal the main execution loop to jump to the error handler
             g_vm_instance_ptr->jump_to_error_handler = true;

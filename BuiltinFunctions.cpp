@@ -19,6 +19,165 @@
 #include <sstream>
 #include <iostream>
 #include <unordered_set>
+#ifdef JDCOM
+#include <windows.h> // Basic Windows types, HRESULT
+#include <objbase.h> // CoInitializeEx, CoUninitialize, CoCreateInstance, CLSIDFromProgID
+#include <oaidl.h>   // <-- Contains definitions for IDispatch, VARIANT, SAFEARRAY, etc.
+#include <comdef.h>  // _com_ptr_t, _variant_t, _bstr_t, _com_error
+
+// Helper to convert BasicValue to _variant_t (for passing arguments to COM methods)
+_variant_t basic_value_to_variant_t(const BasicValue& val) {
+    return std::visit([](auto&& arg) -> _variant_t {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            return _variant_t(arg);
+        }
+        else if constexpr (std::is_same_v<T, double>) {
+            return _variant_t(arg);
+        }
+        else if constexpr (std::is_same_v<T, int>) { // If you still use int
+            return _variant_t(static_cast<long>(arg)); // Convert to long for VARIANT
+        }
+        else if constexpr (std::is_same_v<T, std::string>) {
+            // Convert std::string to BSTR (Basic string)
+            return _variant_t(arg.c_str()); // BSTR is allocated internally by _variant_t
+        }
+        else if constexpr (std::is_same_v<T, ComObject>) {
+            // AddRef the IDispatch pointer and return it as a VARIANT of type VT_DISPATCH
+            if (arg.ptr) {
+                arg.ptr->AddRef(); // _variant_t takes ownership, so we need to AddRef
+                return _variant_t(static_cast<IDispatch*>(arg.ptr), true); // true = AddRef
+            }
+            return _variant_t(); // Empty variant for null ComObject
+        }
+        else {
+            // Handle other types or return an error/empty variant
+            return _variant_t();
+        }
+        }, val);
+}
+
+// Helper to convert _variant_t back to BasicValue
+BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
+    switch (vt.vt) {
+    case VT_BOOL: return (bool)(vt.boolVal != 0);
+    case VT_I2:   return (double)vt.iVal;
+    case VT_I4:   return (double)vt.lVal;
+    case VT_R4:   return (double)vt.fltVal;
+    case VT_R8:   return (double)vt.dblVal;
+    case VT_BSTR: {
+        if (vt.bstrVal) return std::string(_bstr_t(vt.bstrVal));
+        return std::string("");
+    }
+    case VT_DISPATCH: {
+        // When returning an IDispatch, wrap it in our ComObject.
+        // The _com_ptr_t will handle the AddRef/Release.
+        return ComObject(vt.pdispVal);
+    }
+                    // Handle other types as needed (VT_DATE, VT_ARRAY, etc.)
+    default:
+        Error::set(15, vm.runtime_current_line); // Type Mismatch if unhandled
+        return 0.0; // Default error value
+    }
+}
+
+
+// CREATEOBJECT(ProgID$) -> ComObject
+BasicValue builtin_create_object(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return ComObject(); // Return a null ComObject
+    }
+
+    std::string progID_str = to_string(args[0]);
+    CLSID clsid;
+    HRESULT hr;
+
+    // Convert ProgID (e.g., "Excel.Application") to CLSID
+    _bstr_t bstrProgID(progID_str.c_str());
+    hr = CLSIDFromProgID(bstrProgID, &clsid);
+
+    if (FAILED(hr)) {
+        Error::set(1, vm.runtime_current_line); // Syntax error: Invalid ProgID
+        // Optionally, print HRESULT for debugging: TextIO::print("CLSIDFromProgID failed: " + std::to_string(hr) + "\n");
+        return ComObject();
+    }
+
+    IDispatch* pDisp = nullptr;
+    // Create the COM object
+    hr = CoCreateInstance(clsid, NULL, CLSCTX_LOCAL_SERVER | CLSCTX_INPROC_SERVER, IID_IDispatch, (void**)&pDisp);
+
+    if (FAILED(hr)) {
+        Error::set(12, vm.runtime_current_line); // File I/O Error or general COM error
+        // Optionally, print HRESULT: TextIO::print("CoCreateInstance failed: " + std::to_string(hr) + "\n");
+        return ComObject();
+    }
+
+    // Wrap the IDispatch pointer in our ComObject struct (which uses _com_ptr_t)
+    return ComObject(pDisp); // _com_ptr_t takes ownership, no need for pDisp->Release() here
+}
+
+// Helper function to call IDispatch::Invoke
+HRESULT invoke_com_method(
+    IDispatchPtr pDisp,
+    const std::string& memberName,
+    const std::vector<BasicValue>& args, // For method arguments OR indexed property arguments
+    _variant_t& result,                   // For method return value / property get result
+    WORD dwFlags,                         // DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPATCH_PROPERTYPUT
+    const _variant_t* pPropertyValue // Optional for property put (the value being assigned)
+) {
+    if (!pDisp) return E_POINTER;
+
+    _bstr_t bstrMember(memberName.c_str());
+    DISPID dispID;
+    HRESULT hr = pDisp->GetIDsOfNames(IID_NULL, &bstrMember.GetBSTR(), 1, LOCALE_USER_DEFAULT, &dispID);
+    if (FAILED(hr)) {
+        // Handle "Member not found" error
+        return hr;
+    }
+
+    DISPPARAMS dp = { 0 };
+    std::vector<_variant_t> varArgs; // Use a vector to manage _variant_t lifetimes
+
+    // Arguments are typically passed in reverse order for COM Invoke
+    // For PROPERTYPUT, the actual value to set is the FIRST (rightmost) argument.
+    // For METHOD/PROPERTYGET, the arguments are processed normally.
+
+    // If this is a PROPERTYPUT, add the property value first (this will be the last arg in COM's rgvarg)
+    if (dwFlags & DISPATCH_PROPERTYPUT) {
+        if (!pPropertyValue) {
+            return E_INVALIDARG; // Must provide a value for PROPERTYPUT
+        }
+        varArgs.push_back(*pPropertyValue);
+    }
+
+    // Now add the rest of the arguments (e.g., row/column for Cells property, or method parameters)
+    // These are processed in reverse order relative to their appearance in Basic code.
+    for (auto it = args.rbegin(); it != args.rend(); ++it) {
+        varArgs.push_back(basic_value_to_variant_t(*it));
+    }
+
+    if (!varArgs.empty()) {
+        dp.rgvarg = varArgs.data();
+        dp.cArgs = (UINT)varArgs.size();
+    }
+
+    // For property put, need to set the DISPID_PROPERTYPUT argument
+    // This named argument ensures COM knows which argument is the property's new value.
+    DISPID dispIDNamedArgs = DISPID_PROPERTYPUT; // This is a special DISPID value
+    if (dwFlags & DISPATCH_PROPERTYPUT) {
+        dp.rgdispidNamedArgs = &dispIDNamedArgs;
+        dp.cNamedArgs = 1; // Only one named argument for the property value
+    }
+
+    result.Clear(); // Clear result variant before invoke
+
+    // Call Invoke
+    hr = pDisp->Invoke(dispID, IID_NULL, LOCALE_USER_DEFAULT, dwFlags, &dp, &result, NULL, NULL);
+
+    return hr;
+}
+#endif
 
 namespace fs = std::filesystem;
 
@@ -1663,6 +1822,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("RECT", -1, builtin_rect);     // <-- ADD THIS
     register_proc("CIRCLE", -1, builtin_circle); // <-- ADD THIS
 #endif
+#ifdef JDCOM
+    register_func("CREATEOBJECT", 1, builtin_create_object);
+#endif
+
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
     register_proc("LOCATE", 2, builtin_locate);

@@ -3,8 +3,22 @@
 #include "Commands.hpp" // Required for Commands::do_run
 #include "Error.hpp"    // Required for Error::print
 #include <windows.h> 
+#ifdef JDCOM         // also define: NOMINMAX!!!!!
+#include <objbase.h> // Required for CoInitializeEx, CoUninitialize
+#endif 
 
 int main(int argc, char* argv[]) {
+    // Initialize COM for the current thread
+    // COINIT_APARTMENTTHREADED for single-threaded apartment (most common for UI components like Excel)
+    // COINIT_MULTITHREADED for multi-threaded apartment (less common for OLE Automation)
+#ifdef JDCOM
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (FAILED(hr)) {
+        // Handle COM initialization error (e.g., print a message and exit)
+        MessageBoxA(NULL, "Failed to initialize COM!", "Error", MB_ICONERROR);
+        return 1;
+    }
+#endif
 
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
@@ -29,6 +43,11 @@ int main(int argc, char* argv[]) {
         // No filename was provided, so start the standard interactive REPL
         interpreter.start();
     }
+
+    // Uninitialize COM when the application exits
+#ifdef JDCOM
+    CoUninitialize();
+#endif
 
     return 0;
 }

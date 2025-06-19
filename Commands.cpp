@@ -13,6 +13,7 @@
 #include "Types.hpp"
 #include "TextEditor.hpp"
 #include "LocaleManager.hpp"
+#include "BuiltinFunctions.hpp"
 
 
 namespace { // Use an anonymous namespace to keep this helper local to this file
@@ -200,6 +201,23 @@ std::string to_string(const BasicValue& val) {
             size_t data_idx = 0;
             return array_to_string_recursive(*arg, data_idx, 0);
         }
+#ifdef JDCOM
+        else if constexpr (std::is_same_v<T, ComObject>) { // This is the problematic part
+            // For a ComObject, you typically can't get a meaningful string
+            // without trying to query for properties like Name or ProgID.
+            // For simplicity, return a placeholder string.
+            if (arg.ptr) {
+                // If you want more detail, you could try to get the ProgID:
+                // _bstr_t progIdBstr;
+                // HRESULT hr = ProgIDFromCLSID(arg.ptr->GetClassID(), &progIdBstr.GetBSTR()); // Needs GetClassID, often not directly on IDispatch
+                // If getting ProgID is too complex for now, a simple placeholder is fine.
+                return "<COM Object>"; // Return a descriptive string 
+            }
+            else {
+                return "<Null COM Object>"; // Return for a null COM object 
+            }
+        }
+#endif
         }, val);
 }
 
@@ -460,6 +478,8 @@ void Commands::do_let(NeReLaBasic& vm) {
     vm.pcode++;
     std::string name = to_upper(read_string(vm));
 
+    size_t dot_pos = name.find('.');
+
     // --- Case 1: ARRAY ELEMENT ASSIGNMENT (e.g., A[i, j] = ...) ---
     if (var_type_token == Tokens::ID::ARRAY_ACCESS) {
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTBRACKET) {
@@ -539,15 +559,52 @@ void Commands::do_let(NeReLaBasic& vm) {
     }
     // --- Case 3: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
     else {
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
-            Error::set(1, vm.runtime_current_line); return;
-        }
+#ifdef JDCOM
+        if (dot_pos == std::string::npos) {
+#endif
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
+                Error::set(1, vm.runtime_current_line); return;
+            }
 
-        // The universal evaluate_expression now handles all cases,
-        // including array literals, thanks to our changes in parse_primary.
-        BasicValue value_to_assign = vm.evaluate_expression();
-        if (Error::get() != 0) return;
-        set_variable(vm, name, value_to_assign);
+            // The universal evaluate_expression now handles all cases,
+            // including array literals, thanks to our changes in parse_primary.
+            BasicValue value_to_assign = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            set_variable(vm, name, value_to_assign);
+#ifdef JDCOM
+        }
+        else { // It has a dot, so it's a qualified name for assignment
+            std::string base_name = name.substr(0, dot_pos);
+            std::string prop_name = name.substr(dot_pos + 1);
+
+            BasicValue& com_obj_val = get_variable(vm, base_name); // Get the base object variable
+            if (!std::holds_alternative<ComObject>(com_obj_val)) {
+                Error::set(15, vm.runtime_current_line); // Type Mismatch: Base is not a COM object
+                return;
+            }
+            IDispatchPtr pDisp = std::get<ComObject>(com_obj_val).ptr;
+            if (!pDisp) {
+                Error::set(1, vm.runtime_current_line); // Object not initialized
+                return;
+            }
+
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
+                Error::set(1, vm.runtime_current_line); return;
+            }
+            BasicValue value_to_assign = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+
+            _variant_t vt_value = basic_value_to_variant_t(value_to_assign);
+            _variant_t result_vt_unused;
+
+            HRESULT hr = invoke_com_method(pDisp, prop_name, {}, result_vt_unused, DISPATCH_PROPERTYPUT, &vt_value);
+            if (FAILED(hr)) {
+                Error::set(12, vm.runtime_current_line); // General COM error
+                // Optionally, print HRESULT for debugging
+                return;
+            }
+        }
+#endif
     }
 }
 void Commands::do_goto(NeReLaBasic& vm) {
@@ -693,10 +750,88 @@ void Commands::do_func(NeReLaBasic& vm) {
     vm.pcode = jump_over_address;
 }
 
+// Commands.cpp
+
+// ... (existing includes and helper functions)
+
 void Commands::do_callfunc(NeReLaBasic& vm) {
-    std::string identifier_being_called = to_upper(read_string(vm));
+    std::string identifier_being_called = to_upper(read_string(vm)); // Reads the function/member name
+
+#ifdef JDCOM
+    size_t dot_pos = identifier_being_called.find('.');
+    if (dot_pos != std::string::npos) {
+        // This is a qualified call, e.g., "obj.Method" or "obj.Property"
+        std::string obj_var_name = identifier_being_called.substr(0, dot_pos);
+        std::string member_name = identifier_being_called.substr(dot_pos + 1);
+
+        BasicValue& com_obj_val = get_variable(vm, to_upper(obj_var_name));
+        if (!std::holds_alternative<ComObject>(com_obj_val)) {
+            Error::set(15, vm.runtime_current_line); // Type Mismatch: Base is not a COM object
+            return;
+        }
+        IDispatchPtr pDisp = std::get<ComObject>(com_obj_val).ptr;
+        if (!pDisp) {
+            Error::set(1, vm.runtime_current_line); // Object not initialized
+            return;
+        }
+
+        // Parse arguments within parentheses
+        std::vector<BasicValue> com_args;
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
+            Error::set(1, vm.runtime_current_line); // Syntax Error: Missing '('
+            return;
+        }
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            while (true) {
+                com_args.push_back(vm.evaluate_expression());
+                if (Error::get() != 0) return;
+                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                if (separator != Tokens::ID::C_COMMA) {
+                    Error::set(1, vm.runtime_current_line); // Syntax Error: Missing ','
+                    return;
+                }
+                vm.pcode++;
+            }
+        }
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            Error::set(18, vm.runtime_current_line); // Syntax Error: Missing ')'
+            return;
+        }
+        else {
+            vm.pcode++; // Consume ')'
+        }
+
+        _variant_t result_vt_unused; // Method/property called as a statement, result is ignored.
+        HRESULT hr;
+
+        // Strategy for statement-style calls:
+        // First, try as a method (DISPATCH_METHOD). This is the most common use for statements.
+        hr = invoke_com_method(pDisp, member_name, com_args, result_vt_unused, DISPATCH_METHOD);
+        if (FAILED(hr)) {
+            // If it failed as a method, and there are arguments, try as an indexed property GET.
+            // This covers cases like obj.Cells(1,1) where the result is not assigned but the call is still needed.
+            // Note: If you want to allow setting properties in a command-like fashion (e.g., obj.Value("New Text")),
+            //       you'd need more sophisticated parsing to determine if it's a PROPERTYPUT vs PROPERTYGET.
+            //       For now, let's stick to methods and property gets for `do_callfunc`.
+            if (!com_args.empty()) {
+                hr = invoke_com_method(pDisp, member_name, com_args, result_vt_unused, DISPATCH_PROPERTYGET);
+            }
+
+            if (FAILED(hr)) {
+                Error::set(12, vm.runtime_current_line); // General COM error
+                return;
+            }
+        }
+        // Successfully invoked COM method/property. No return value needed.
+        return; // Exit do_callfunc
+    }
+#endif  
+    // --- Original Logic for non-COM function calls (Built-in or User-Defined BASIC) ---
+    // This part remains largely the same.
     std::string real_func_to_call = identifier_being_called;
 
+    // Check for higher-order function calls (e.g., func_var(arg))
     if (!vm.active_function_table->count(real_func_to_call)) {
         BasicValue& var = get_variable(vm, identifier_being_called);
         if (std::holds_alternative<FunctionRef>(var)) {
@@ -705,15 +840,17 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
     }
 
     if (!vm.active_function_table->count(real_func_to_call)) {
-        Error::set(22, vm.runtime_current_line); return;
+        Error::set(22, vm.runtime_current_line); // Undefined function
+        return;
     }
 
     const auto& func_info = vm.active_function_table->at(real_func_to_call);
     std::vector<BasicValue> args;
 
-    // --- CORRECTED, SIMPLIFIED ARGUMENT PARSING ---
+    // Argument Parsing Logic (as it was)
     if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
-        Error::set(1, vm.runtime_current_line); return;
+        Error::set(1, vm.runtime_current_line); // Syntax Error
+        return;
     }
     if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
         while (true) {
@@ -721,48 +858,50 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
             if (Error::get() != 0) return;
             Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
             if (separator == Tokens::ID::C_RIGHTPAREN) break;
-            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+            if (separator != Tokens::ID::C_COMMA) {
+                Error::set(1, vm.runtime_current_line); // Syntax Error
+                return;
+            }
             vm.pcode++;
         }
     }
     vm.pcode++; // Consume ')'
 
     if (func_info.arity != -1 && args.size() != func_info.arity) {
-        Error::set(26, vm.runtime_current_line); return;
+        Error::set(26, vm.runtime_current_line); // Incorrect number of arguments
+        return;
     }
 
-    // --- Execution Logic ---
+    // --- Execution Logic for BASIC Functions ---
     if (func_info.native_impl != nullptr) {
+        // Native C++ function/procedure
         func_info.native_impl(vm, args);
     }
     else {
+        // User-defined BASIC function/procedure
         NeReLaBasic::StackFrame frame;
-        // It's a user-defined BASIC function. Set up the stack frame.
         for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
             if (i < args.size()) {
                 frame.local_variables[func_info.parameter_names[i]] = args[i];
             }
         }
 
-
         frame.return_p_code_ptr = vm.active_p_code;
         frame.return_pcode = vm.pcode;
-        // NEW: Save the entire function table of the caller
         frame.previous_function_table_ptr = vm.active_function_table;
         frame.for_stack_size_on_entry = vm.for_stack.size();
         vm.call_stack.push_back(frame);
 
-        // --- CONTEXT SWITCH ---
+        // CONTEXT SWITCH
         if (!func_info.module_name.empty() && vm.compiled_modules.count(func_info.module_name)) {
             auto& target_module = vm.compiled_modules[func_info.module_name];
             vm.active_p_code = &target_module.p_code;
             vm.active_function_table = &target_module.function_table;
         }
 
-        vm.pcode = func_info.start_pcode;
+        vm.pcode = func_info.start_pcode; // Jump to function start
     }
 }
-
 
 // --- Implementation of do_return ---
 void Commands::do_return(NeReLaBasic& vm) {
@@ -904,7 +1043,7 @@ void Commands::do_resume(NeReLaBasic& vm) {
         vm.pcode++; // Consume NEXT token
 
         // Restore the execution context exactly as it was before the error handler was called
-        vm.pcode = vm.resume_pcode; // Points to the line/statement that caused the error
+        vm.pcode = vm.resume_pcode_next_statement; // Points to the line/statement that caused the error
         // The main loop in execute() will then re-evaluate it and proceed.
         vm.runtime_current_line = vm.resume_runtime_line;
         vm.active_p_code = vm.resume_p_code_ptr;

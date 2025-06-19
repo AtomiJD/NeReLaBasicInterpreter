@@ -1,7 +1,3 @@
-' Save this file as main.bas
-
-' Import the MATH module. The interpreter will look for "MATH.bas"
-' and compile it before running this program.
 import MATH
 
 print "--- Module Test Program ---"

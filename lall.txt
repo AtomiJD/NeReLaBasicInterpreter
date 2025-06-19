@@ -7,9 +7,6 @@ ENDSUB
 
 On Error call Atomi
 
-bad_object = CREATEOBJECT("NonExistent.Application") ' This will trigger an error
-
-
 ' Initialize a COM object
 objXL = CREATEOBJECT("Excel.Application")
 
@@ -17,10 +14,10 @@ objXL = CREATEOBJECT("Excel.Application")
 objXL.Visible = TRUE
 
 ' Call a method
-wbs = objXL.Workbooks
-wb = wbs.Add()
+objXL.Workbooks.Add()
 
-objSheet = objXL.ActiveSheet
+' Get a property that returns another object
+objSheet = objXL.ActiveWorkbook.Sheets(1)
 
 ' Set a cell value
 objcell = objSheet.Cells(1, 1)
@@ -34,8 +31,8 @@ objXL.Quit()
 
 PRINT "Excel automation complete."
 
+' Example of error handling with ON ERROR CALL
+ON ERROR CALL MyErrorHandler
+
 bad_object = CREATEOBJECT("NonExistent.Application") ' This will trigger an error
-
-Print "Finish"
-
 

@@ -7,6 +7,7 @@
 #include "TextIO.hpp"
 #include "Error.hpp"
 #include "StringUtils.hpp"
+#include "Types.hpp"
 #include <iostream>
 #include <fstream>   // For std::ifstream
 #include <string>
@@ -1057,6 +1058,7 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
         }
         bool line_is_done = false;
         while (!line_is_done && pcode < active_p_code->size()) {
+            current_statement_start_pcode = pcode; // Capture statement start here!
             if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR)
                 statement();
             if (Error::get() != 0 || is_stopped) {
@@ -1104,8 +1106,25 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
                     this->active_p_code = &target_module.p_code;
                     this->active_function_table = &target_module.function_table;
                 }
-                this->pcode = proc_info.start_pcode; // Jump to start of error handler function
-                pcode++; // Consume the C_CR
+                uint16_t current_error_pcode_snapshot = pcode; // Save where the error occurred
+
+                // Find the end of the current logical line
+                while (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::NOCMD) {
+                    pcode++; // Move past the current problematic statement/expression
+                }
+                if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
+                    pcode++; // Consume C_CR
+                    pcode += 2; // Consume line number bytes for the *next* line
+                }
+                // Now pcode points to the start of the *next* statement after the error line.
+                resume_pcode_next_statement = pcode;
+
+                // Restore pcode to where it was for ERL to be accurate in the handler
+                pcode = current_error_pcode_snapshot;
+
+                Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (next_token == Tokens::ID::C_CR)
+                    pcode++; // Consume the C_CR
             }
             else {
                 // If the error handler function is somehow not found at runtime,
@@ -1376,10 +1395,10 @@ BasicValue NeReLaBasic::parse_array_literal() {
 BasicValue NeReLaBasic::parse_primary() {
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
-    if (token == Tokens::ID::TRUE) {
+    if (token == Tokens::ID::JD_TRUE) {
         pcode++; return true;
     }
-    if (token == Tokens::ID::FALSE) {
+    if (token == Tokens::ID::JD_FALSE) {
         pcode++; return false;
     }
     if (token == Tokens::ID::NUMBER) {
@@ -1400,12 +1419,65 @@ BasicValue NeReLaBasic::parse_primary() {
         // Look up the constant's value in our table and return it
         return builtin_constants.at(const_name);
     }
-    if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) { // Treat all numeric vars as float now
+    if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
         pcode++;
-        std::string var_name;
-        while ((*active_p_code)[pcode] != 0) { var_name += (*active_p_code)[pcode++]; }
-        pcode++;
-        return get_variable(*this, to_upper(var_name));
+        std::string var_or_qual_name = read_string(*this); // Reads "VARNAME" or "VARNAME.MEMBER" or "MODULE.FUNC"
+
+#ifdef JDCOM
+        size_t dot_pos = var_or_qual_name.find('.');
+        if (dot_pos != std::string::npos) {
+            // We have a qualified name: "objOrModule.member"
+            std::string base_name = var_or_qual_name.substr(0, dot_pos);
+            std::string member_name = var_or_qual_name.substr(dot_pos + 1);
+
+            // First, try to resolve as a ComObject member access
+            BasicValue& base_var = get_variable(*this, to_upper(base_name));
+
+            if (std::holds_alternative<ComObject>(base_var)) {
+                IDispatchPtr pDisp = std::get<ComObject>(base_var).ptr;
+                if (!pDisp) {
+                    Error::set(1, runtime_current_line); // Object not initialized
+                    return false;
+                }
+
+                // Assume it's a property GET for now.
+                // If it were a method call, CALLFUNC token would have been used.
+                _variant_t result_vt;
+                HRESULT hr = invoke_com_method(pDisp, member_name, {}, result_vt, DISPATCH_PROPERTYGET);
+                if (FAILED(hr)) {
+                    Error::set(12, runtime_current_line); // General COM error
+                    // You might want to get more specific COM error info here
+                    return false;
+                }
+                return variant_t_to_basic_value(result_vt, *this);
+            }
+            // else if it's not a ComObject, it must be a module function/variable access (handled by other parts of the VM)
+            // For example, your `get_variable` might already handle module-qualified names if `variables` is global.
+            // If `get_variable` doesn't handle module prefixes, you'd need to expand that logic.
+            // For now, assuming your `get_variable` correctly fetches the module-qualified function reference.
+            else
+                if (active_function_table->count(to_upper(var_or_qual_name))) {
+                // It's a module.function or module.variable that isn't a COM object.
+                // This will then fall through to the CALLFUNC handler or variable lookup.
+                // This path implies that module functions are explicitly handled elsewhere,
+                // likely by being added to the active_function_table with mangled names.
+                // For direct variable lookup like `MODULE.VAR`, `get_variable` needs to handle it.
+                // Given your current `get_variable` relies on `variables` map, if module variables
+                // are directly in there, it will work. Otherwise, more logic needed.
+                return get_variable(*this, to_upper(var_or_qual_name));
+            }
+            else {
+                Error::set(3, runtime_current_line); // Variable not found or unknown module member
+                return false;
+            }
+        }
+        else {
+#endif
+            // No dot, so it's a simple variable name (e.g., "MYVAR" or "i")
+            return get_variable(*this, to_upper(var_or_qual_name));
+#ifdef JDCOM
+        }
+#endif
     }
     if (token == Tokens::ID::FUNCREF) {
         pcode++; // Consume FUNCREF token
@@ -1516,49 +1588,118 @@ BasicValue NeReLaBasic::parse_primary() {
         std::string identifier_being_called = to_upper(read_string(*this));
         std::string real_func_to_call = identifier_being_called;
 
-        // Check for higher-order function calls
-        if (!active_function_table->count(real_func_to_call)) {
-            BasicValue& var = get_variable(*this, identifier_being_called);
-            if (std::holds_alternative<FunctionRef>(var)) {
-                real_func_to_call = std::get<FunctionRef>(var).name;
+#ifdef JDCOM
+        // Check if it's an object method call
+        size_t dot_pos = identifier_being_called.find('.');
+        if (dot_pos != std::string::npos) {
+            std::string obj_var_name = identifier_being_called.substr(0, dot_pos);
+            std::string member_name = identifier_being_called.substr(dot_pos + 1); // e.g., "Sheets" or "Cells"
+
+            BasicValue& com_obj_val = get_variable(*this, to_upper(obj_var_name));
+            if (!std::holds_alternative<ComObject>(com_obj_val)) {
+                Error::set(15, runtime_current_line); // Type Mismatch: Not a COM object
+                return false;
             }
-        }
-
-        if (!active_function_table->count(real_func_to_call)) {
-            Error::set(22, runtime_current_line);
-            return false;
-        }
-
-        const auto& func_info = active_function_table->at(real_func_to_call);
-        std::vector<BasicValue> args;
-
-        // Argument Parsing Logic (This is now correct)
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
-            Error::set(1, runtime_current_line); return false;
-        }
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            while (true) {
-                // The ONLY rule is to evaluate the expression. This is the fix.
-                args.push_back(evaluate_expression());
-                if (Error::get() != 0) return false;
-
-                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
-                pcode++;
+            IDispatchPtr pDisp = std::get<ComObject>(com_obj_val).ptr;
+            if (!pDisp) {
+                Error::set(1, runtime_current_line); // Object not initialized
+                return false;
             }
-        }
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            Error::set(18, runtime_current_line); return false;
-        } else
-            pcode++; // Consume ')'
 
-        if (func_info.arity != -1 && args.size() != func_info.arity) {
-            Error::set(26, runtime_current_line); return false;
-        }
+            std::vector<BasicValue> com_args;
+            // Parse arguments within parentheses
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
+                Error::set(1, runtime_current_line); return false;
+            }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                while (true) {
+                    com_args.push_back(evaluate_expression());
+                    if (Error::get() != 0) return false;
+                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
+                    pcode++;
+                }
+            }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                Error::set(18, runtime_current_line); return false;
+            }
+            else {
+                pcode++; // Consume ')'
+            }
 
-        // --- DELEGATE TO THE NEW HELPER FUNCTION ---
-        return execute_function_for_value(func_info, args);
+            _variant_t result_vt;
+            HRESULT hr;
+
+            // --- Try DISPATCH_PROPERTYGET first if arguments are present ---
+            if (!com_args.empty()) { // If there are arguments, it might be an indexed property get
+                hr = invoke_com_method(pDisp, member_name, com_args, result_vt, DISPATCH_PROPERTYGET);
+                if (SUCCEEDED(hr)) {
+                    return variant_t_to_basic_value(result_vt, *this);
+                }
+                // If PropertyGet with args failed, it might be a regular method.
+                // Fall through to try as DISPATCH_METHOD.
+            }
+
+            // If it was a simple property get (no args) or if PropertyGet with args failed, try as method.
+            hr = invoke_com_method(pDisp, member_name, com_args, result_vt, DISPATCH_METHOD);
+            if (FAILED(hr)) {
+                // If both attempts fail, then report the error
+                Error::set(12, runtime_current_line); // General COM error (or a more specific one if needed)
+                return false;
+            }
+            return variant_t_to_basic_value(result_vt, *this);
+        }
+        else
+        {
+#endif
+            // Check for higher-order function calls
+            if (!active_function_table->count(real_func_to_call)) {
+                BasicValue& var = get_variable(*this, identifier_being_called);
+                if (std::holds_alternative<FunctionRef>(var)) {
+                    real_func_to_call = std::get<FunctionRef>(var).name;
+                }
+            }
+
+            if (!active_function_table->count(real_func_to_call)) {
+                Error::set(22, runtime_current_line);
+                return false;
+            }
+
+            const auto& func_info = active_function_table->at(real_func_to_call);
+            std::vector<BasicValue> args;
+
+            // Argument Parsing Logic (This is now correct)
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
+                Error::set(1, runtime_current_line); return false;
+            }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                while (true) {
+                    // The ONLY rule is to evaluate the expression. This is the fix.
+                    args.push_back(evaluate_expression());
+                    if (Error::get() != 0) return false;
+
+                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
+                    pcode++;
+                }
+            }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                Error::set(18, runtime_current_line); return false;
+            }
+            else
+                pcode++; // Consume ')'
+
+            if (func_info.arity != -1 && args.size() != func_info.arity) {
+                Error::set(26, runtime_current_line); return false;
+            }
+
+            // --- DELEGATE TO THE NEW HELPER FUNCTION ---
+            return execute_function_for_value(func_info, args);
+#ifdef JDCOM
+        }
+#endif
     }
     Error::set(1, runtime_current_line);
     return false;

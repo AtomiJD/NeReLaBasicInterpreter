@@ -1,4 +1,12 @@
 #pragma once
+#ifdef JDCOM
+// COM support
+#include <windows.h> // Basic Windows types, HRESULT
+#include <objbase.h> // CoInitializeEx, CoUninitialize, CoCreateInstance, CLSIDFromProgID
+#include <oaidl.h>   // <-- Contains definitions for IDispatch, VARIANT, SAFEARRAY, etc.
+#include <comdef.h>  // _com_ptr_t, _variant_t, _bstr_t, _com_error
+#endif
+
 #include <variant>
 #include <string>
 #include <chrono>
@@ -7,9 +15,14 @@
 #include <stdexcept>  // for exceptions
 #include <map>
 
+
 // Forward-declare the Array struct so BasicValue can know it exists.
 struct Array;
 struct Map;
+
+//#ifdef JDCOM
+//struct IDispatch;
+//#endif
 
 // An enum to represent the declared type of a variable.
 enum class DataType {
@@ -35,6 +48,54 @@ struct DateTime {
     bool operator==(const DateTime&) const = default;
 };
 
+#ifdef JDCOM
+// Structype to hold COM IDispatch pointers
+struct ComObject {
+    IDispatchPtr  ptr;
+
+    // Default constructor
+    ComObject() : ptr(nullptr) {}
+
+    // Constructor from an IDispatch pointer.
+    // This constructor takes ownership of the raw pDisp,
+    // assuming it already has a reference (e.g., from CoCreateInstance).
+    // The 'false' parameter tells _com_ptr_t NOT to call AddRef again.
+    // Ensure IDispatch is fully defined (via oaidl.h) before this is parsed by compiler.
+    ComObject(IDispatch* pDisp) : ptr(pDisp) {} // This is the correct form.
+
+    // Copy constructor (performs AddRef implicitly via _com_ptr_t's copy ctor)
+    ComObject(const ComObject& other) : ptr(other.ptr) {}
+
+    // Move constructor
+    ComObject(ComObject&& other) noexcept : ptr(std::move(other.ptr)) {}
+
+    // Copy assignment (handles AddRef/Release implicitly)
+    ComObject& operator=(const ComObject& other) {
+        if (this != &other) {
+            ptr = other.ptr;
+        }
+        return *this;
+    }
+
+    // Move assignment
+    ComObject& operator=(ComObject&& other) noexcept {
+        if (this != &other) {
+            ptr = std::move(other.ptr);
+        }
+        return *this;
+    }
+
+    // Comparison (for simplicity, just compare pointers or disallow direct comparison in Basic)
+    bool operator==(const ComObject& other) const {
+        return ptr == other.ptr;
+    }
+    bool operator!=(const ComObject& other) const {
+        return ptr != other.ptr;
+    }
+    // Add other comparison operators if meaningful
+};
+#endif
+
 // This struct represents a "pointer" or "reference" to a function.
 // We just store the function's name.
 struct FunctionRef {
@@ -43,8 +104,12 @@ struct FunctionRef {
     bool operator==(const FunctionRef&) const = default;
 };
 
-// --- Use a std::shared_ptr to break the circular dependency ---
+// --- Use a std::shared_ptr to break the circular dependency ---    
+#ifdef JDCOM
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, ComObject>;
+#else
 using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>>;
+#endif
 
 
 // --- A structure to represent N-dimensional arrays ---
