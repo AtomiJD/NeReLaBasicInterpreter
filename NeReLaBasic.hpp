@@ -7,11 +7,15 @@
 #include <unordered_map>
 #include "Types.hpp"
 #include "Tokens.hpp"
+#include "NetworkManager.hpp"
 #include <functional> 
 #ifdef SDL3
 #include "Graphics.hpp"
 #endif
 
+
+// Forward declaration of NetworkManager class1
+class NetworkManager;
 
 class NeReLaBasic {
 public:
@@ -132,6 +136,8 @@ public:
 #ifdef SDL3
     Graphics graphics_system;
 #endif
+
+    NetworkManager network_manager;
 
     // --- Error Handling State ---
     bool error_handler_active = false;

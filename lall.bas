@@ -1,41 +1,41 @@
-SUB Atomi()
-    PRINT "An error occurred: "; ERR
-    PRINT "Error Line: "; ERL
-    ' You could add logic here to clean up or ask the user to retry
-    RESUME NEXT ' Resume execution at the next statement
-ENDSUB
+import HTTP
 
-On Error call Atomi
+print "--- Web Test Program ---"
+print
 
-bad_object = CREATEOBJECT("NonExistent.Application") ' This will trigger an error
+' Test a simple GET request to an API that returns JSON
+print "Fetching data from JSONPlaceholder..."
+API_URL$ = "https://jsonplaceholder.typicode.com/todos/1"
+JSON_DATA$ = HTTP.GET$(API_URL$)
 
+IF ERR = 0 THEN
+    print "HTTP Status Code: "; HTTP.STATUSCODE()
+    print "Received JSON:"; JSON_DATA$
+ELSE
+    print "Error fetching URL: "; API_URL$; " (Error: "; ERR; ")"
+ENDIF
+print
 
-' Initialize a COM object
-objXL = CREATEOBJECT("Excel.Application")
+' Test setting headers (e.g., for a simple authentication)
+print "Testing HTTP.CLEARHEADERS..."
 
-' Access a property
-objXL.Visible = TRUE
+HTTP.CLEARHEADERS
+print "Testing HTTP.SETHEADER..."
 
-' Call a method
-wbs = objXL.Workbooks
-wb = wbs.Add()
+HTTP.SETHEADER "X-Custom-Header", "MyCustomValue" 
+HTTP.SETHEADER "Accept", "application/json" 
 
-objSheet = objXL.ActiveSheet
+' Try another GET request with headers
+API_URL2$ = "https://httpbin.org/headers" ' This API echoes back headers
+print "Fetching headers from httpbin.org/headers..."
+HEADER_RESPONSE$ = HTTP.GET$(API_URL2$)
 
-' Set a cell value
-objcell = objSheet.Cells(1, 1)
-objcell.Value = "Hello from NeReLa Basic!"
+IF ERR = 0 THEN
+    print "HTTP Status Code: "; HTTP.STATUSCODE()
+    print "Headers Received:"; HEADER_RESPONSE$
+ELSE
+    print "Error fetching URL: "; API_URL2$; " (Error: "; ERR; ")"
+ENDIF
+print
 
-' Save the workbook (example, needs full path and error handling)
-' objXL.ActiveWorkbook.SaveAs("C:\temp\MyBasicWorkbook.xlsx")
-
-' Quit Excel
-objXL.Quit()
-
-PRINT "Excel automation complete."
-
-bad_object = CREATEOBJECT("NonExistent.Application") ' This will trigger an error
-
-Print "Finish"
-
-
+print "--- Web Test Complete ---"

@@ -958,12 +958,18 @@ void Commands::do_callsub(NeReLaBasic& vm) {
     Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
     if (token != Tokens::ID::C_CR) {
-        while (true) {
-            args.push_back(vm.evaluate_expression());
-            if (Error::get() != 0) return;
-            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (separator == Tokens::ID::C_CR) break;
-            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+        if (proc_info.arity == -1 || proc_info.arity > 0) {
+            while (true) {
+                args.push_back(vm.evaluate_expression());
+                if (Error::get() != 0) return;
+                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                if (separator == Tokens::ID::C_CR) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+                vm.pcode++;
+            }
+        }
+        else {
+            vm.pcode++;
             vm.pcode++;
         }
     }

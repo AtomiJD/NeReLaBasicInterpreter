@@ -72,9 +72,9 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <TargetName>jdBasic</TargetName>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\include;D:\usr\dev\c\NeReLaBasicInterpreter\libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include</IncludePath>
     <ReferencePath>$(VC_ReferencesPath_x64);</ReferencePath>
-    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\lib\x64</LibraryPath>
+    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <TargetName>jdBasic</TargetName>
@@ -111,14 +111,14 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);  JDCOM; NOMINMAX</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);  JDCOM; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); SDL3.lib</AdditionalDependencies>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); SDL3.lib; libssl.lib;libcrypto.lib;</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -146,6 +146,7 @@
     <ClCompile Include="LocaleManager.cpp" />
     <ClCompile Include="NeReLaBasic.cpp" />
     <ClCompile Include="NeReLaBasicInterpreter.cpp" />
+    <ClCompile Include="NetworkManager.cpp" />
     <ClCompile Include="Statements.cpp" />
     <ClCompile Include="StringUtils.cpp" />
     <ClCompile Include="TextEditor.cpp" />
@@ -168,7 +169,14 @@
   <ItemGroup>
     <None Include="lall.bas" />
     <None Include="loop.bas" />
+    <None Include="NetworkManager.hpp" />
     <None Include="README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="jdBasic.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

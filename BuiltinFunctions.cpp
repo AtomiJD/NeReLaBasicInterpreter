@@ -19,6 +19,9 @@
 #include <sstream>
 #include <iostream>
 #include <unordered_set>
+
+#include "NetworkManager.hpp"
+
 #ifdef JDCOM
 #include <windows.h> // Basic Windows types, HRESULT
 #include <objbase.h> // CoInitializeEx, CoUninitialize, CoCreateInstance, CLSIDFromProgID
@@ -1767,6 +1770,59 @@ BasicValue builtin_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
 // --- GRAPHICS PROCEDURES ---
 
+// --- HTTP Built-in Functions ---
+
+// HTTP.GET$(URL$)
+BasicValue builtin_http_get(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return std::string("");
+    }
+    std::string url = to_string(args[0]);
+
+    std::string response_body = vm.network_manager.httpGet(url);
+
+    // Set a BASIC error if the HTTP request failed or returned a bad status code (e.g., 4xx or 5xx)
+    if (vm.network_manager.last_http_status_code >= 400 || vm.network_manager.last_http_status_code == -1) {
+        // You might want a more specific error code like 27 for "Network Error"
+        TextIO::print(response_body);
+        Error::set(12, vm.runtime_current_line); // Using File I/O Error for now, consider a new one.
+    }
+
+    return response_body;
+}
+
+// HTTP.SETHEADER(HeaderName$, HeaderValue$)
+BasicValue builtin_http_setheader(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false; // Procedures return dummy value
+    }
+    std::string header_name = to_string(args[0]);
+    std::string header_value = to_string(args[1]);
+    vm.network_manager.setHeader(header_name, header_value);
+    return false;
+}
+
+// HTTP.CLEARHEADERS
+BasicValue builtin_http_clearheaders(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line); // Too many arguments
+        return false;
+    }
+    vm.network_manager.clearHeaders();
+    return false;
+}
+
+// HTTP.STATUSCODE()
+BasicValue builtin_http_statuscode(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line); // Too many arguments
+        return 0.0;
+    }
+    return static_cast<double>(vm.network_manager.last_http_status_code);
+}
+
 
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
@@ -1855,6 +1911,13 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 #ifdef JDCOM
     register_func("CREATEOBJECT", 1, builtin_create_object);
 #endif
+
+    // These will effectively be available as "HTTP.GET$", "HTTP.SETHEADER", etc.,
+    // after the HTTP module is compiled and its exported functions are linked.
+    register_func("HTTPGET$", 1, builtin_http_get);
+    register_proc("HTTPSETHEADER", 2, builtin_http_setheader);
+    register_proc("HTTPCLEARHEADERS", 0, builtin_http_clearheaders);
+    register_func("HTTPSTATUSCODE", 0, builtin_http_statuscode);
 
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);

@@ -1585,9 +1585,6 @@ BasicValue NeReLaBasic::parse_primary() {
     if (token == Tokens::ID::C_LEFTPAREN) {
         pcode++;
         auto result = evaluate_expression();
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            Error::set(1, runtime_current_line); return false;
-        }
         pcode++;
         return result;
     }
