@@ -14,25 +14,24 @@
 #include <numeric>    // for std::accumulate
 #include <stdexcept>  // for exceptions
 #include <map>
+#include "json.hpp" 
 
 
 // Forward-declare the Array struct so BasicValue can know it exists.
 struct Array;
 struct Map;
-
-//#ifdef JDCOM
-//struct IDispatch;
-//#endif
+struct JsonObject; 
 
 // An enum to represent the declared type of a variable.
 enum class DataType {
-    DEFAULT, // Original behavior, can hold any type
+    DEFAULT,
     BOOL,
     INTEGER,
     DOUBLE,
     STRING,
     DATETIME,
-    MAP
+    MAP,
+    JSON 
 };
 
 // A struct to hold our date/time value, based on std::chrono.
@@ -104,11 +103,16 @@ struct FunctionRef {
     bool operator==(const FunctionRef&) const = default;
 };
 
+struct JsonObject {
+    nlohmann::json data;
+};
+
+
 // --- Use a std::shared_ptr to break the circular dependency ---    
 #ifdef JDCOM
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, ComObject>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject>;
 #else
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>>;
 #endif
 
 

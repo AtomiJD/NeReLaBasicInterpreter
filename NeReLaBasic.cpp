@@ -1531,19 +1531,35 @@ BasicValue NeReLaBasic::parse_primary() {
             Error::set(1, runtime_current_line); return false;
         }
 
-        BasicValue& array_var = get_variable(*this, var_name);
-        if (!std::holds_alternative<std::shared_ptr<Array>>(array_var)) {
-            Error::set(15, runtime_current_line); return false; // Type Mismatch
+        BasicValue& var = get_variable(*this, var_name);
+        if (std::holds_alternative<std::shared_ptr<Array>>(var)) {
+            const auto& arr_ptr = std::get<std::shared_ptr<Array>>(var);
+            if (!arr_ptr) { Error::set(15, runtime_current_line); return false; }
+            try {
+                size_t flat_index = arr_ptr->get_flat_index(indices);
+                return arr_ptr->data[flat_index];
+            }
+            catch (const std::exception&) {
+                Error::set(10, runtime_current_line); return false;
+            }
         }
-        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(array_var);
-        if (!arr_ptr) { Error::set(15, runtime_current_line); return false; }
+        else if (std::holds_alternative<std::shared_ptr<JsonObject>>(var)) {
+            const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(var);
+            if (!json_ptr) { Error::set(15, runtime_current_line); return false; }
+            if (indices.size() != 1) { Error::set(10, runtime_current_line); return false; } // JSON arrays are 1D
 
-        try {
-            size_t flat_index = arr_ptr->get_flat_index(indices);
-            return arr_ptr->data[flat_index];
+            try {
+                // Access the JSON array element and convert it back to a BasicValue
+                const auto& json_element = json_ptr->data.at(indices[0]);
+                return json_to_basic_value(json_element);
+            }
+            catch (const std::exception&) {
+                Error::set(10, runtime_current_line); // Index out of bounds or other JSON error
+                return false;
+            }
         }
-        catch (const std::exception&) {
-            Error::set(10, runtime_current_line); // Bad subscript
+        else {
+            Error::set(15, runtime_current_line); // Type Mismatch
             return false;
         }
     }
@@ -1562,22 +1578,35 @@ BasicValue NeReLaBasic::parse_primary() {
             Error::set(1, runtime_current_line); return false;
         }
 
-        BasicValue& map_var = get_variable(*this, var_name);
-        if (!std::holds_alternative<std::shared_ptr<Map>>(map_var)) {
-            Error::set(15, runtime_current_line); return false;
+        BasicValue& var = get_variable(*this, var_name);
+        if (std::holds_alternative<std::shared_ptr<Map>>(var)) {
+            const auto& map_ptr = std::get<std::shared_ptr<Map>>(var);
+            if (!map_ptr) { Error::set(15, runtime_current_line); return false; }
+            if (map_ptr->data.count(key)) {
+                return map_ptr->data.at(key);
+            }
+            else {
+                return 0.0; // Key not found
+            }
         }
-        const auto& map_ptr = std::get<std::shared_ptr<Map>>(map_var);
-        if (!map_ptr) { Error::set(15, runtime_current_line); return false; }
-
-        // Check if the key exists and return its value
-        if (map_ptr->data.count(key)) {
-            return map_ptr->data.at(key);
+        else if (std::holds_alternative<std::shared_ptr<JsonObject>>(var)) {
+            const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(var);
+            if (!json_ptr) { Error::set(15, runtime_current_line); return false; }
+            try {
+                // Access the JSON object member and convert it back to a BasicValue
+                const auto& json_element = json_ptr->data.at(key);
+                return json_to_basic_value(json_element);
+            }
+            catch (const std::exception&) {
+                Error::set(3, runtime_current_line); // Variable not found (for JSON key)
+                return false;
+            }
         }
         else {
-            // Key not found. Return a default value (0.0 or empty string).
-            return 0.0;
+            Error::set(15, runtime_current_line); // Type Mismatch
+            return false;
         }
-    }
+    }  
     if (token == Tokens::ID::C_LEFTBRACKET) {
         return parse_array_literal();
     }

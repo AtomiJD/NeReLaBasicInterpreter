@@ -5,6 +5,7 @@
 #include "Error.hpp"
 #include "Types.hpp"
 #include "LocaleManager.hpp"
+#include <thread>
 #include <chrono>
 #include <cmath> // For sin, cos, etc.
 #include <conio.h>
@@ -17,10 +18,14 @@
 #include <regex>
 #include <iomanip> 
 #include <sstream>
-#include <iostream>
 #include <unordered_set>
+#include <cstdlib> 
 
+#ifdef HTTP
 #include "NetworkManager.hpp"
+#endif
+
+#include "json.hpp"
 
 #ifdef JDCOM
 #include <windows.h> // Basic Windows types, HRESULT
@@ -226,6 +231,73 @@ std::string wildcard_to_regex(const std::string& wildcard) {
     regex_str += '$';
     return regex_str;
 }
+
+// --- NEW: JSON Functionality ---
+
+// Helper function to convert a nlohmann::json object to a BasicValue
+// This is essential for accessing parts of the parsed JSON from BASIC.
+BasicValue json_to_basic_value(const nlohmann::json& j) {
+    if (j.is_null()) {
+        return 0.0; // Or handle as an error/special null type
+    }
+    if (j.is_boolean()) {
+        return j.get<bool>();
+    }
+    if (j.is_number()) {
+        return j.get<double>();
+    }
+    if (j.is_string()) {
+        return j.get<std::string>();
+    }
+    if (j.is_object()) {
+        // Convert JSON object to our BASIC Map
+        auto map_ptr = std::make_shared<Map>();
+        for (auto& [key, value] : j.items()) {
+            map_ptr->data[key] = json_to_basic_value(value);
+        }
+        return map_ptr;
+    }
+    if (j.is_array()) {
+        // Convert JSON array to our BASIC Array (always 1D for simplicity here)
+        auto array_ptr = std::make_shared<Array>();
+        for (const auto& item : j) {
+            array_ptr->data.push_back(json_to_basic_value(item));
+        }
+        array_ptr->shape = { array_ptr->data.size() };
+        return array_ptr;
+    }
+    // Default fallback
+    return 0.0;
+}
+
+
+// JSON.PARSE$(json_string$) -> JsonObject
+BasicValue builtin_json_parse(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return {}; // Return empty BasicValue
+    }
+
+    std::string json_string = to_string(args[0]);
+
+    try {
+        // Create our JsonObject wrapper
+        auto json_obj_ptr = std::make_shared<JsonObject>();
+
+        // Use the nlohmann library to parse the string
+        json_obj_ptr->data = nlohmann::json::parse(json_string);
+
+        // Return the shared pointer to our JsonObject inside the BasicValue
+        return json_obj_ptr;
+    }
+    catch (const nlohmann::json::parse_error& e) {
+        // If parsing fails, set a BASIC error and return.
+        Error::set(1, vm.runtime_current_line); // Syntax Error (or a new "Invalid JSON" error)
+        TextIO::print("JSON Parse Error: " + std::string(e.what()) + "\n");
+        return {};
+    }
+}
+
 
 //=========================================================
 // C++ Implementations of our Native BASIC Functions
@@ -1411,6 +1483,49 @@ BasicValue builtin_option(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false; // Procedures return a dummy value
 }
 
+// GETENV$(variable_name$) -> string$
+// Reads the value of a system environment variable.
+BasicValue builtin_getenv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return std::string("");
+    }
+
+    std::string var_name = to_string(args[0]);
+    if (var_name.empty()) {
+        return std::string("");
+    }
+
+#ifdef _WIN32
+        // --- Windows-specific, secure version ---
+        char* buffer = nullptr;
+    size_t size = 0;
+
+    // _dupenv_s allocates memory for the buffer and must be freed later.
+    errno_t err = _dupenv_s(&buffer, &size, var_name.c_str());
+    
+    // Check if it succeeded and the buffer is valid
+    if (err == 0 && buffer != nullptr) {
+        std::string value(buffer);
+        free(buffer); // IMPORTANT: Free the memory allocated by _dupenv_s
+        return value;
+    }
+    else {
+        return std::string(""); // Return empty string if not found or on error
+    }
+
+#else
+// --- Standard C++ version for other platforms (Linux, macOS) ---
+char* value = std::getenv(var_name.c_str());
+if (value == nullptr) {
+    return std::string(""); // Not found
+}
+else {
+    return std::string(value); // Found
+}
+#endif
+}
+
 // --- Filesystem ---
 // DIR [path_string]
 BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1770,6 +1885,7 @@ BasicValue builtin_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
 // --- GRAPHICS PROCEDURES ---
 
+#ifdef HTTP
 // --- HTTP Built-in Functions ---
 
 // HTTP.GET$(URL$)
@@ -1822,6 +1938,50 @@ BasicValue builtin_http_statuscode(NeReLaBasic& vm, const std::vector<BasicValue
     }
     return static_cast<double>(vm.network_manager.last_http_status_code);
 }
+
+// HTTP.POST$(URL$, Data$, ContentType$) -> ResponseBody$
+BasicValue builtin_httppost(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return std::string("");
+    }
+    std::string url = to_string(args[0]);
+    std::string body = to_string(args[1]);
+    std::string content_type = to_string(args[2]);
+
+    std::string response_body = vm.network_manager.httpPost(url, body, content_type);
+
+    if (vm.network_manager.last_http_status_code >= 400 || vm.network_manager.last_http_status_code == -1) {
+        // You might want a more specific error code like 27 for "Network Error"
+        Error::set(12, vm.runtime_current_line); // Using File I/O Error for now
+        TextIO::print("?Network Error: " + response_body + "\n");
+    }
+
+    return response_body;
+}
+
+// HTTP.PUT$(URL$, Data$, ContentType$) -> ResponseBody$
+BasicValue builtin_httpput(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return std::string("");
+    }
+    std::string url = to_string(args[0]);
+    std::string body = to_string(args[1]);
+    std::string content_type = to_string(args[2]);
+
+    std::string response_body = vm.network_manager.httpPut(url, body, content_type);
+
+    if (vm.network_manager.last_http_status_code >= 400 || vm.network_manager.last_http_status_code == -1) {
+        Error::set(12, vm.runtime_current_line);
+        TextIO::print("?Network Error: " + response_body + "\n");
+    }
+
+    return response_body;
+}
+
+
+#endif
 
 
 // --- The Registration Function ---
@@ -1911,13 +2071,18 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 #ifdef JDCOM
     register_func("CREATEOBJECT", 1, builtin_create_object);
 #endif
-
+#ifdef HTTP
     // These will effectively be available as "HTTP.GET$", "HTTP.SETHEADER", etc.,
     // after the HTTP module is compiled and its exported functions are linked.
     register_func("HTTPGET$", 1, builtin_http_get);
     register_proc("HTTPSETHEADER", 2, builtin_http_setheader);
     register_proc("HTTPCLEARHEADERS", 0, builtin_http_clearheaders);
     register_func("HTTPSTATUSCODE", 0, builtin_http_statuscode);
+    register_func("HTTPPOST$", 3, builtin_httppost);
+    register_func("HTTPPUT$", 3, builtin_httpput);
+#endif
+    register_func("JSON.PARSE$", 1, builtin_json_parse);
+
 
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
@@ -1925,6 +2090,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SLEEP", 1, builtin_sleep);  
     register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);
+    register_func("GETENV$", 1, builtin_getenv_str);
 
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
     register_proc("CD", 1, builtin_cd);

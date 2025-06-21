@@ -1,5 +1,6 @@
 // NetworkManager.cpp
 //#define CPPHTTPLIB_OPENSSL_SUPPORT
+#ifdef HTTP
 #include "NetworkManager.hpp"
 #include "Error.hpp" // For setting BASIC errors
 #include <iostream>  // For debugging output
@@ -12,6 +13,85 @@ NetworkManager::NetworkManager() : last_http_status_code(0) {
 NetworkManager::~NetworkManager() {
     // Clean up any persistent resources if necessary
 }
+
+namespace { // Keep this helper private to this file
+    std::string httpPostOrPut(const std::string& verb, const std::string& url_str, const std::string& body, const std::string& content_type, std::map<std::string, std::string>& custom_headers, int& last_http_status_code) {
+        last_http_status_code = 0;
+
+        // URL Parsing logic from your httpGet - no changes needed here
+        std::regex url_regex(R"(([^:]+)://([^:/]+)(?::(\d+))?(/.*)?)");
+        std::smatch matches;
+        std::string protocol = "http", host, path = "/";
+        int port = 0;
+
+        if (std::regex_match(url_str, matches, url_regex)) {
+            if (matches[1].matched) protocol = matches[1].str();
+            if (matches[2].matched) host = matches[2].str();
+            if (matches[3].matched) port = std::stoi(matches[3].str());
+            if (matches[4].matched) path = matches[4].str();
+        }
+        else {
+            host = url_str; // Fallback
+        }
+
+        if (port == 0) port = (protocol == "https") ? 443 : 80;
+
+        // Client setup - no changes needed here
+        std::unique_ptr<httplib::SSLClient> cli;
+        if (protocol == "https") {
+            cli = std::make_unique<httplib::SSLClient>(host.c_str(), port);
+        }
+        else {
+            // Your current code doesn't support non-SSL, which is fine for modern APIs.
+            std::cerr << "NetworkManager Error: Only HTTPS is supported." << std::endl;
+            last_http_status_code = -1;
+            return "Error: Only HTTPS is supported.";
+        }
+
+        if (!cli) {
+            last_http_status_code = -1;
+            return "Error: Client creation failed.";
+        }
+
+        cli->set_connection_timeout(10); // Increased timeout for potentially larger payloads
+        cli->set_read_timeout(30);
+        cli->set_write_timeout(10);
+
+        httplib::Headers headers;
+        for (const auto& pair : custom_headers) {
+            headers.emplace(pair.first, pair.second);
+        }
+
+        // --- THE CORE CHANGE ---
+        // Use the verb to decide which httplib method to call
+        httplib::Result res;
+        if (verb == "POST") {
+            res = cli->Post(path.c_str(), headers, body, content_type.c_str());
+        }
+        else if (verb == "PUT") {
+            res = cli->Put(path.c_str(), headers, body, content_type.c_str());
+        }
+        else {
+            last_http_status_code = -1;
+            return "Error: Invalid internal HTTP verb.";
+        }
+        // --- END OF CORE CHANGE ---
+
+        if (res) {
+            last_http_status_code = res->status;
+            if (res->status >= 400) {
+                // Return the error body from the server for better debugging
+                return "Server error " + std::to_string(res->status) + ": " + res->body;
+            }
+            return res->body;
+        }
+        else {
+            last_http_status_code = -1;
+            return "HTTP request failed: " + httplib::to_string(res.error());
+        }
+    }
+} // end anonymous namespace
+
 
 std::string NetworkManager::httpGet(const std::string& url_str) {
     last_http_status_code = 0; // Reset status
@@ -134,3 +214,13 @@ void NetworkManager::setHeader(const std::string& name, const std::string& value
 void NetworkManager::clearHeaders() {
     custom_headers.clear();
 }
+
+std::string NetworkManager::httpPost(const std::string& url, const std::string& body, const std::string& content_type) {
+    return httpPostOrPut("POST", url, body, content_type, custom_headers, last_http_status_code);
+}
+
+std::string NetworkManager::httpPut(const std::string& url, const std::string& body, const std::string& content_type) {
+    return httpPostOrPut("PUT", url, body, content_type, custom_headers, last_http_status_code);
+}
+
+#endif

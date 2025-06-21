@@ -137,7 +137,9 @@ public:
     Graphics graphics_system;
 #endif
 
+#ifdef HTTP
     NetworkManager network_manager;
+#endif
 
     // --- Error Handling State ---
     bool error_handler_active = false;

@@ -81,6 +81,7 @@ namespace Tokens {
         CALLFUNC = 0x47,
         EXPORT = 0x48, // c++20 module
         IMPORT = 0x49, // c++20 module
+        JSON = 0x4A,
         FLUPP = 0x4C,
         INPUT = 0x4D, 
         STOP = 0x50,    

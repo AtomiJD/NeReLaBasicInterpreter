@@ -72,7 +72,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <TargetName>jdBasic</TargetName>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\include;D:\usr\dev\c\NeReLaBasicInterpreter\libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);c:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\include;c:\usr\dev\c\NeReLaBasicInterpreter\libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include</IncludePath>
     <ReferencePath>$(VC_ReferencesPath_x64);</ReferencePath>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);D:\usr\dev\c\NeReLaBasicInterpreter\libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT</LibraryPath>
   </PropertyGroup>
@@ -111,14 +111,14 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);  JDCOM; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);  HTTP; JDCOM; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); SDL3.lib; libssl.lib;libcrypto.lib;</AdditionalDependencies>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); libssl.lib;libcrypto.lib;</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

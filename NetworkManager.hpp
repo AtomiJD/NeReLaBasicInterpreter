@@ -1,5 +1,6 @@
 // NetworkManager.hpp
 #pragma once
+#ifdef HTTP
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -9,11 +10,11 @@
 #ifndef CPPHTTPLIB_OPENSSL_SUPPORT
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #endif
+#include <httplib.h> // Include httplib here
 
 #include <string>
 #include <vector>
 #include <map>
-#include <httplib.h> // Include httplib here
 
 // Forward declare NeReLaBasic so we can pass it to methods if needed
 class NeReLaBasic;
@@ -35,6 +36,12 @@ public:
     // Performs an HTTP GET request
     std::string httpGet(const std::string& url);
 
+    // Performs an HTTP POST request
+    std::string httpPost(const std::string& url, const std::string& body, const std::string& content_type);
+
+    // Performs an HTTP PUT request
+    std::string httpPut(const std::string& url, const std::string& body, const std::string& content_type);
+
     // Sets a custom header for subsequent requests
     void setHeader(const std::string& name, const std::string& value);
 
@@ -43,3 +50,4 @@ public:
 
     // --- TODO: Add HTTP Server functions here later ---
 };
+#endif

@@ -58,6 +58,7 @@ namespace {
         {"IMPORT",  Tokens::ID::IMPORT},
         {"AS",      Tokens::ID::AS},
         {"MAP",     Tokens::ID::MAP},
+        {"JSON",    Tokens::ID::JSON},
         {"DATE",    Tokens::ID::DATE},    
         {"BOOLEAN", Tokens::ID::BOOL},   
         {"BOOL",    Tokens::ID::BOOL},   

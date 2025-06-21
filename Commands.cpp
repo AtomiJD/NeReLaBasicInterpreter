@@ -172,6 +172,13 @@ std::string to_string(const BasicValue& val) {
             ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
             return ss.str();
         }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
+            if (!arg) {
+                return "<Null JSON>";
+            }
+            // Use the nlohmann::json pretty-printer (dump)
+            return arg->data.dump(2); // dump with an indent of 2 spaces
+        }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
             // --- CASE for handling std::shared_ptr<Map> ---
             if (!arg) {

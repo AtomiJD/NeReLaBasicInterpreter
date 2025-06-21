@@ -15,6 +15,8 @@ using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>
 // function table (e.g., the main table or a module's table) that it should populate.
 void register_builtin_functions(NeReLaBasic& vm, FunctionTable& table_to_populate);
 
+BasicValue json_to_basic_value(const nlohmann::json& j);
+
 #ifdef JDCOM
 _variant_t basic_value_to_variant_t(const BasicValue& val);
 BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm);

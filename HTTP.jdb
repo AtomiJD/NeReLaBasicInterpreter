@@ -8,6 +8,11 @@ export func GET$(URL$)
     return JSON_DATA$
 endfunc
 
+export func POST$(API_URL$, JSON_BODY$, CONTENT$)
+    JSON_DATA$ = HTTPPOST$(API_URL$, JSON_BODY$, CONTENT$)
+    return JSON_DATA$
+endfunc
+
 'Setting request headers (for future POST/GET with headers)
 export sub SETHEADER(HeaderName$, HeaderValue$)
     HTTPSETHEADER HeaderName$, HeaderValue$
