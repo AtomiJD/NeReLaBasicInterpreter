@@ -144,7 +144,7 @@ objXL.ActiveSheet.Cells(1, 1).Value = "Hello from a Chain!"
   * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
   * **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
   * **`IOTA(N)`**: Generates a 1D array of numbers from 1 to N.
-  * \*\*Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)` **: Functions that reduce an array to a single value (e.g.,  `SUM(my\_array)\`).
+  * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)` **: Functions that reduce an array to a single value (e.g.,  `SUM(my\_array)\`).
   * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
   * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
   * **`REVERSE(array)`**: Reverses the elements of an array.
