@@ -232,7 +232,7 @@ std::string wildcard_to_regex(const std::string& wildcard) {
     return regex_str;
 }
 
-// --- NEW: JSON Functionality ---
+// --- JSON Functionality ---
 
 // Forward declaration for recursive conversion
 nlohmann::json basic_to_json_value(const BasicValue& val);
@@ -365,6 +365,88 @@ BasicValue builtin_json_stringify(NeReLaBasic& vm, const std::vector<BasicValue>
         TextIO::print("JSON Stringify Error: " + std::string(e.what()) + "\n");
         return std::string("");
     }
+}
+
+//=========================================================
+// NEW: Map Helper Functions
+//=========================================================
+
+// MAP.EXISTS(map, key$) -> boolean
+BasicValue builtin_map_exists(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to MAP.EXISTS must be a Map.");
+        return false;
+    }
+
+    const auto& map_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    if (!map_ptr) {
+        Error::set(15, vm.runtime_current_line, "Map variable is null.");
+        return false;
+    }
+
+    const std::string key = to_string(args[1]);
+
+    return map_ptr->data.count(key) > 0;
+}
+
+// MAP.KEYS(map) -> array
+BasicValue builtin_map_keys(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to MAP.KEYS must be a Map.");
+        return {};
+    }
+
+    const auto& map_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    if (!map_ptr) {
+        Error::set(15, vm.runtime_current_line, "Map variable is null.");
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->data.reserve(map_ptr->data.size());
+
+    for (const auto& pair : map_ptr->data) {
+        result_ptr->data.push_back(pair.first);
+    }
+
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
+// MAP.VALUES(map) -> array
+BasicValue builtin_map_values(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to MAP.VALUES must be a Map.");
+        return {};
+    }
+
+    const auto& map_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    if (!map_ptr) {
+        Error::set(15, vm.runtime_current_line, "Map variable is null.");
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->data.reserve(map_ptr->data.size());
+
+    for (const auto& pair : map_ptr->data) {
+        result_ptr->data.push_back(pair.second);
+    }
+
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
 }
 
 
@@ -2146,9 +2228,13 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("HTTPPOST$", 3, builtin_httppost);
     register_func("HTTPPUT$", 3, builtin_httpput);
 #endif
+
     register_func("JSON.PARSE$", 1, builtin_json_parse);
     register_func("JSON.STRINGIFY$", 1, builtin_json_stringify);
 
+    register_func("MAP.EXISTS", 2, builtin_map_exists);
+    register_func("MAP.KEYS", 1, builtin_map_keys);
+    register_func("MAP.VALUES", 1, builtin_map_values);
 
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
