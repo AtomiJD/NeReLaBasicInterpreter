@@ -564,49 +564,45 @@ void Commands::do_let(NeReLaBasic& vm) {
     // --- Case 3: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
     else {
 #ifdef JDCOM
-        if (dot_pos == std::string::npos) {
-#endif
-            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
-                Error::set(1, vm.runtime_current_line); return;
-            }
-
-            // The universal evaluate_expression now handles all cases,
-            // including array literals, thanks to our changes in parse_primary.
-            BasicValue value_to_assign = vm.evaluate_expression();
-            if (Error::get() != 0) return;
-            set_variable(vm, name, value_to_assign);
-#ifdef JDCOM
-        }
-        else { // It has a dot, so it's a qualified name for assignment
-            std::string base_name = name.substr(0, dot_pos);
-            std::string prop_name = name.substr(dot_pos + 1);
-
-            BasicValue& com_obj_val = get_variable(vm, base_name); // Get the base object variable
-            if (!std::holds_alternative<ComObject>(com_obj_val)) {
-                Error::set(15, vm.runtime_current_line); // Type Mismatch: Base is not a COM object
-                return;
-            }
-            IDispatchPtr pDisp = std::get<ComObject>(com_obj_val).ptr;
-            if (!pDisp) {
-                Error::set(1, vm.runtime_current_line); // Object not initialized
-                return;
-            }
-
+        // Check if it's a COM property assignment (e.g. MyObj.Value = 1)
+        if (name.find('.') != std::string::npos) {
+            // It has a dot, so it's a qualified name for assignment
             if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
                 Error::set(1, vm.runtime_current_line); return;
             }
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
+
+            // Use the new helper to resolve the chain up to the final object
+            auto [final_obj, final_member] = vm.resolve_com_chain(name);
+            if (Error::get() != 0) return;
+
+            if (!std::holds_alternative<ComObject>(final_obj)) {
+                Error::set(15, vm.runtime_current_line); return;
+            }
+            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+            if (!pDisp) { Error::set(1, vm.runtime_current_line); return; }
 
             _variant_t vt_value = basic_value_to_variant_t(value_to_assign);
             _variant_t result_vt_unused;
 
-            HRESULT hr = invoke_com_method(pDisp, prop_name, {}, result_vt_unused, DISPATCH_PROPERTYPUT, &vt_value);
+            // Perform a PROPERTYPUT on the final member
+            HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt_unused, DISPATCH_PROPERTYPUT, &vt_value);
             if (FAILED(hr)) {
                 Error::set(12, vm.runtime_current_line); // General COM error
-                // Optionally, print HRESULT for debugging
                 return;
             }
+        }
+        else {
+#endif
+            // It's a regular variable assignment (e.g. A = 10)
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
+                Error::set(1, vm.runtime_current_line); return;
+            }
+            BasicValue value_to_assign = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            set_variable(vm, name, value_to_assign);
+#ifdef JDCOM
         }
 #endif
     }
@@ -1172,18 +1168,15 @@ void Commands::do_loop(NeReLaBasic& vm) {
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;
 
-    // Check if a filename argument was provided
     if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::STRING) {
-        vm.pcode++; // Consume STRING token
+        vm.pcode++;
         filename_to_edit = read_string(vm);
 
-        // Load the file into the VM's source buffer
         std::ifstream infile(filename_to_edit);
         if (infile) {
             vm.source_lines.clear();
             std::string line;
             while (std::getline(infile, line)) {
-                // Remove trailing carriage return if present
                 if (!line.empty() && line.back() == '\r') {
                     line.pop_back();
                 }
@@ -1195,23 +1188,11 @@ void Commands::do_edit(NeReLaBasic& vm) {
         }
     }
 
-    // Launch the editor, passing a reference to the source lines
-    TextEditor editor(vm.source_lines);
+    // MODIFIED: Pass the filename to the editor's constructor
+    TextEditor editor(vm.source_lines, filename_to_edit);
     editor.run();
 
-    // After editor exits, offer to save if a filename was used
-    if (!filename_to_edit.empty()) {
-        TextIO::print("Save changes to " + filename_to_edit + "? (Y/N) ");
-        char response = _getch();
-        TextIO::print(std::string(1, response) + "\n");
-        if (toupper(response) == 'Y') {
-            std::ofstream outfile(filename_to_edit);
-            for (const auto& line : vm.source_lines) {
-                outfile << line << '\n';
-            }
-            TextIO::print("File saved.\n");
-        }
-    }
+    // The old save prompt is no longer needed here, as saving is handled inside the editor
 }
 
 void Commands::do_list(NeReLaBasic& vm) {

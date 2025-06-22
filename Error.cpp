@@ -3,14 +3,16 @@
 #include "TextIO.hpp" // We need this to print the error messages.
 #include "NeReLaBasic.hpp"
 #include <vector>
+#include <string> // Required for std::string
 
-extern NeReLaBasic* g_vm_instance_ptr = nullptr; // Initialize to nullptr
+extern NeReLaBasic* g_vm_instance_ptr; // Initialize to nullptr
 
 namespace {
-    // This variable holds the current error code.
-    // It's in an anonymous namespace, making it accessible only within this file.
+    // These variables hold the current error state.
+    // They are in an anonymous namespace, making them accessible only within this file.
     uint8_t current_error_code = 0;
     uint16_t error_line_number = 0;
+    std::string custom_error_message = ""; // NEW: For custom error messages.
 
     // A table of error messages. We can expand this as we go.
     // Using a vector of strings makes it easy to manage.
@@ -45,10 +47,15 @@ namespace {
     };
 }
 
-void Error::set(uint8_t errorCode, uint16_t lineNumber) {
+void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& customMessage) {
     if (current_error_code == 0) { // Only store the first error
         current_error_code = errorCode;
         error_line_number = lineNumber;
+        custom_error_message = customMessage; // Store the custom message
+        if (!customMessage.empty()) {
+            g_vm_instance_ptr->builtin_constants["ERRMSG"] = customMessage;
+        }
+
         if (g_vm_instance_ptr && g_vm_instance_ptr->error_handler_active) {
             // Set the built-in error variables (ERR and ERL)
             g_vm_instance_ptr->err_code = static_cast<double>(errorCode);
@@ -79,6 +86,7 @@ uint8_t Error::get() {
 void Error::clear() {
     current_error_code = 0;
     error_line_number = 0;
+    custom_error_message.clear(); // Clear the custom message as well
 }
 
 std::string Error::getMessage(uint8_t errorCode) {
@@ -90,7 +98,22 @@ std::string Error::getMessage(uint8_t errorCode) {
 
 void Error::print() {
     if (current_error_code != 0) {
-        TextIO::print("? Error #" + std::to_string(current_error_code) + "," + getMessage(current_error_code));
+        std::string message;
+
+        // Check if the errorCode has a standard message.
+        if (current_error_code < errorMessages.size()) {
+            message = errorMessages[current_error_code];
+        }
+        // If not, check if a custom message was provided.
+        else if (!custom_error_message.empty()) {
+            message = custom_error_message;
+        }
+        // Otherwise, use a generic fallback.
+        else {
+            message = "Unknown Error";
+        }
+
+        TextIO::print("? Error #" + std::to_string(current_error_code) + "," + message);
         if (error_line_number > 0) {
             TextIO::print(" IN LINE " + std::to_string(error_line_number));
         }

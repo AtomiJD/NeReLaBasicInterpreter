@@ -5,7 +5,7 @@
 
 namespace Error {
     // Sets the current error code.
-    void set(uint8_t errorCode, uint16_t lineNumber);
+    void set(uint8_t errorCode, uint16_t lineNumber, const std::string& customMessage = "");
 
     // Gets the current error code.
     uint8_t get();

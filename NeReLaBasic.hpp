@@ -167,7 +167,7 @@ public:
     void start();  // The main REPL
     void execute(const std::vector<uint8_t>& code_to_run);
     bool loadSourceFromFile(const std::string& filename);
-
+    std::pair<BasicValue, std::string> resolve_com_chain(const std::string& chain_string);
 
     // --- New Declarations for Expression Parsing ---
     BasicValue evaluate_expression();
@@ -192,6 +192,7 @@ private:
 
     // --- Execution Engine ---
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
+    
 };
 
 extern NeReLaBasic* g_vm_instance_ptr;

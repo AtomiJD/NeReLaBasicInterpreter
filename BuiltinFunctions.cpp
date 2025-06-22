@@ -1838,8 +1838,6 @@ BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     return result_ptr;
 }
 
-// --- NEW: High-Performance File I/O Writers ---
-
 // TXTWRITER filename$, content$
 // Writes the content of a string variable to a text file.
 BasicValue builtin_txtwriter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1969,9 +1967,8 @@ BasicValue builtin_http_get(NeReLaBasic& vm, const std::vector<BasicValue>& args
 
     // Set a BASIC error if the HTTP request failed or returned a bad status code (e.g., 4xx or 5xx)
     if (vm.network_manager.last_http_status_code >= 400 || vm.network_manager.last_http_status_code == -1) {
-        // You might want a more specific error code like 27 for "Network Error"
-        TextIO::print(response_body);
-        Error::set(12, vm.runtime_current_line); // Using File I/O Error for now, consider a new one.
+        std::string reason = "?Network Error: " + response_body + "\n";
+        Error::set(1003, vm.runtime_current_line, reason);
     }
 
     return response_body;
@@ -2021,9 +2018,8 @@ BasicValue builtin_httppost(NeReLaBasic& vm, const std::vector<BasicValue>& args
     std::string response_body = vm.network_manager.httpPost(url, body, content_type);
 
     if (vm.network_manager.last_http_status_code >= 400 || vm.network_manager.last_http_status_code == -1) {
-        // You might want a more specific error code like 27 for "Network Error"
-        Error::set(12, vm.runtime_current_line); // Using File I/O Error for now
-        TextIO::print("?Network Error: " + response_body + "\n");
+        std::string reason = "?Network Error: " + response_body + "\n";
+        Error::set(1001, vm.runtime_current_line, reason);
     }
 
     return response_body;
@@ -2042,8 +2038,8 @@ BasicValue builtin_httpput(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     std::string response_body = vm.network_manager.httpPut(url, body, content_type);
 
     if (vm.network_manager.last_http_status_code >= 400 || vm.network_manager.last_http_status_code == -1) {
-        Error::set(12, vm.runtime_current_line);
-        TextIO::print("?Network Error: " + response_body + "\n");
+        std::string reason = "?Network Error: " + response_body + "\n";
+        Error::set(1002, vm.runtime_current_line, reason);
     }
 
     return response_body;

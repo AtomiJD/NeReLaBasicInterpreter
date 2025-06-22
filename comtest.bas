@@ -17,17 +17,11 @@ objXL = CREATEOBJECT("Excel.Application")
 objXL.Visible = TRUE
 
 ' Call a method
-wbs = objXL.Workbooks
-wb = wbs.Add()
-
-objSheet = objXL.ActiveSheet
+wb = objXL.Workbooks.Add()
 
 ' Set a cell value
-objcell = objSheet.Cells(1, 1)
+objcell = objXL.ActiveSheet.Cells(1, 1)
 objcell.Value = "Hello from NeReLa Basic!"
-
-' Save the workbook (example, needs full path and error handling)
-' objXL.ActiveWorkbook.SaveAs("C:\temp\MyBasicWorkbook.xlsx")
 
 ' Quit Excel
 objXL.Quit()

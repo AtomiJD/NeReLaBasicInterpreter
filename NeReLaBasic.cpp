@@ -21,6 +21,8 @@ const std::string NERELA_VERSION = "0.7.2";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
+NeReLaBasic* g_vm_instance_ptr = nullptr;
+
 namespace StringUtils {
     // Left trim
     static inline void ltrim(std::string& s) {
@@ -79,6 +81,62 @@ void trim(std::string& s) {
     else
         s = s.substr(start, end - start + 1);
 }
+
+std::pair<BasicValue, std::string> NeReLaBasic::resolve_com_chain(const std::string& chain_string) {
+    std::stringstream ss(chain_string);
+    std::string segment;
+    std::vector<std::string> parts;
+    while (std::getline(ss, segment, '.')) {
+        parts.push_back(segment);
+    }
+
+    if (parts.empty()) {
+        Error::set(1, runtime_current_line);
+        return {};
+    }
+
+    // Get the base variable (e.g., "objXL").
+    BasicValue current_object = get_variable(*this, to_upper(parts[0]));
+
+    // Navigate the chain up to the second-to-last part.
+    // For a chain like "A.B.C", this loop will process "B".
+    for (size_t i = 1; i < parts.size() - 1; ++i) {
+        if (!std::holds_alternative<ComObject>(current_object)) {
+            Error::set(15, runtime_current_line); // Not a COM object in the middle of a chain.
+            return {};
+        }
+        IDispatchPtr pDisp = std::get<ComObject>(current_object).ptr;
+        if (!pDisp) {
+            Error::set(1, runtime_current_line); // Uninitialized object.
+            return {};
+        }
+
+        _variant_t result_vt;
+        // Assume intermediate parts are properties that return objects.
+        HRESULT hr = invoke_com_method(pDisp, parts[i], {}, result_vt, DISPATCH_PROPERTYGET);
+
+        if (FAILED(hr)) {
+            // Let's also try it as a zero-argument method that returns an object (e.g., Workbooks.Add)
+            hr = invoke_com_method(pDisp, parts[i], {}, result_vt, DISPATCH_METHOD);
+            if (FAILED(hr)) {
+                Error::set(12, runtime_current_line); // General COM error.
+                return {};
+            }
+        }
+        current_object = variant_t_to_basic_value(result_vt, *this);
+    }
+
+    // Return the final object and the final member name.
+    if (parts.size() > 1) {
+        // e.g., for "A.B.C", returns { object B, "C" }
+        return { current_object, parts.back() };
+    }
+    else {
+        // e.g., for "A", returns { object A, "" }
+        return { current_object, "" };
+    }
+}
+
 
 // Constructor: Initializes the interpreter state
 NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memory
@@ -1414,9 +1472,96 @@ BasicValue NeReLaBasic::parse_primary() {
     BasicValue current_value;
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
-    // Step 1: Get the base of the expression chain.
-    // It can be a variable, a literal, a function call, or a parenthesized expression.
-    if (token == Tokens::ID::JD_TRUE) {
+    if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
+        pcode++;
+        std::string var_or_qual_name = to_upper(read_string(*this));
+        if (var_or_qual_name.find('.') != std::string::npos) {
+#ifdef JDCOM
+            auto [final_obj, final_member] = resolve_com_chain(var_or_qual_name);
+            if (Error::get() != 0) return {};
+            if (final_member.empty()) {
+                current_value = final_obj;
+            }
+            else {
+                if (!std::holds_alternative<ComObject>(final_obj)) { Error::set(15, runtime_current_line); return {}; }
+                IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+                _variant_t result_vt;
+                HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt, DISPATCH_PROPERTYGET);
+                if (FAILED(hr)) { Error::set(12, runtime_current_line); return {}; }
+                current_value = variant_t_to_basic_value(result_vt, *this);
+            }
+#else
+            Error::set(1, runtime_current_line);
+            return {};
+#endif
+        }
+        else {
+            current_value = get_variable(*this, var_or_qual_name);
+        }
+    }
+    else if (token == Tokens::ID::CALLFUNC) {
+        pcode++;
+        std::string identifier_being_called = to_upper(read_string(*this));
+        std::string real_func_to_call = identifier_being_called;
+
+        if (!active_function_table->count(real_func_to_call)) {
+            BasicValue& var = get_variable(*this, identifier_being_called);
+            if (std::holds_alternative<FunctionRef>(var)) {
+                real_func_to_call = std::get<FunctionRef>(var).name;
+            }
+        }
+
+        if (active_function_table->count(real_func_to_call)) {
+            const auto& func_info = active_function_table->at(real_func_to_call);
+            std::vector<BasicValue> args;
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                while (true) {
+                    args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+                }
+            }
+            pcode++;
+            if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return {}; }
+            current_value = execute_function_for_value(func_info, args);
+        }
+        else if (identifier_being_called.find('.') != std::string::npos) {
+#ifdef JDCOM
+            auto [final_obj, final_method] = resolve_com_chain(identifier_being_called);
+            if (Error::get() != 0) return {};
+            if (!std::holds_alternative<ComObject>(final_obj)) { Error::set(15, runtime_current_line); return {}; }
+            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+            if (!pDisp) { Error::set(1, runtime_current_line); return {}; }
+            std::vector<BasicValue> com_args;
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                while (true) {
+                    com_args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+                }
+            }
+            pcode++;
+            _variant_t result_vt;
+            HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+            if (FAILED(hr)) {
+                hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
+                if (FAILED(hr)) { Error::set(12, runtime_current_line); return {}; }
+            }
+            current_value = variant_t_to_basic_value(result_vt, *this);
+#else
+            Error::set(22, runtime_current_line);
+            return {};
+#endif
+        }
+        else {
+            Error::set(22, runtime_current_line); return {};
+        }
+    }
+    else if (token == Tokens::ID::JD_TRUE) {
         pcode++;
         current_value = true;
     }
@@ -1439,11 +1584,6 @@ BasicValue NeReLaBasic::parse_primary() {
         pcode++; // Consume CONSTANT token
         current_value = builtin_constants.at(read_string(*this));
     }
-    else if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
-        pcode++;
-        std::string var_name = to_upper(read_string(*this));
-        current_value = get_variable(*this, var_name);
-    }
     else if (token == Tokens::ID::FUNCREF) {
         pcode++;
         current_value = FunctionRef{ to_upper(read_string(*this)) };
@@ -1460,49 +1600,6 @@ BasicValue NeReLaBasic::parse_primary() {
         }
         pcode++; // Consume ')'
     }
-    else if (token == Tokens::ID::CALLFUNC) {
-        pcode++; // Consume CALLFUNC token
-        std::string identifier_being_called = to_upper(read_string(*this));
-        std::string real_func_to_call = identifier_being_called;
-
-        if (!active_function_table->count(real_func_to_call)) {
-            BasicValue& var = get_variable(*this, identifier_being_called);
-            if (std::holds_alternative<FunctionRef>(var)) {
-                real_func_to_call = std::get<FunctionRef>(var).name;
-            }
-        }
-
-        if (!active_function_table->count(real_func_to_call)) {
-            Error::set(22, runtime_current_line);
-            return false;
-        }
-
-        const auto& func_info = active_function_table->at(real_func_to_call);
-        std::vector<BasicValue> args;
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
-            Error::set(1, runtime_current_line); return false;
-        }
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            while (true) {
-                args.push_back(evaluate_expression());
-                if (Error::get() != 0) return false;
-                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
-                pcode++;
-            }
-        }
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTPAREN) {
-            Error::set(18, runtime_current_line); return false;
-        }
-
-        if (func_info.arity != -1 && args.size() != func_info.arity) {
-            Error::set(26, runtime_current_line); return false;
-        }
-        current_value = execute_function_for_value(func_info, args);
-    }
-    // Note: The specific ARRAY_ACCESS and MAP_ACCESS tokens are now only used for LHS assignments in `do_let`.
-    // The expression parser now handles accessors dynamically in the loop below.
     else {
         Error::set(1, runtime_current_line); // Syntax error / Invalid start of expression
         return {};
@@ -1510,7 +1607,7 @@ BasicValue NeReLaBasic::parse_primary() {
 
     if (Error::get() != 0) return {};
 
-    // Step 2: Loop to handle chained accessors like [...] and {...}
+    // Loop to handle chained accessors for JSON/Arrays
     while (true) {
         Tokens::ID accessor_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
@@ -1531,7 +1628,6 @@ BasicValue NeReLaBasic::parse_primary() {
                 if (!arr_ptr || index >= arr_ptr->data.size()) {
                     Error::set(10, runtime_current_line); return {};
                 }
-                // --- FIX: Copy to a temporary before assignment to avoid use-after-free ---
                 BasicValue next_val = arr_ptr->data[index];
                 current_value = std::move(next_val);
             }
@@ -1540,7 +1636,6 @@ BasicValue NeReLaBasic::parse_primary() {
                 if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) {
                     Error::set(10, runtime_current_line); return {};
                 }
-                // This is safe because json_to_basic_value creates a new object
                 current_value = json_to_basic_value(json_ptr->data[index]);
             }
             else {
@@ -1563,7 +1658,6 @@ BasicValue NeReLaBasic::parse_primary() {
                 if (!map_ptr || map_ptr->data.find(key) == map_ptr->data.end()) {
                     Error::set(3, runtime_current_line); return {};
                 }
-                // --- FIX: Copy to a temporary before assignment to avoid use-after-free ---
                 BasicValue next_val = map_ptr->data.at(key);
                 current_value = std::move(next_val);
             }
@@ -1572,7 +1666,6 @@ BasicValue NeReLaBasic::parse_primary() {
                 if (!json_ptr || !json_ptr->data.is_object() || !json_ptr->data.contains(key)) {
                     Error::set(3, runtime_current_line); return {};
                 }
-                // This is safe because json_to_basic_value creates a new object
                 current_value = json_to_basic_value(json_ptr->data.at(key));
             }
             else {

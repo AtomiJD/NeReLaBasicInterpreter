@@ -2,6 +2,8 @@
 #include "TextIO.hpp"
 #include <conio.h>
 #include <algorithm>
+#include <cctype> 
+#include <fstream> // For saving the file
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
@@ -17,255 +19,283 @@ void TextEditor::get_window_size(int& rows, int& cols) {
     }
 }
 
-TextEditor::TextEditor(std::vector<std::string>& lines) : lines_ref(lines) {
+// MODIFIED: Constructor now accepts and stores the filename
+TextEditor::TextEditor(std::vector<std::string>& lines, const std::string& fname)
+    : lines_ref(lines), filename(fname) {
     get_window_size(screen_rows, screen_cols);
-    screen_rows -= 3; // Leave space for status bar and prompt
+    screen_rows -= 2; // Leave space for status bar and prompt
     if (lines_ref.empty()) {
-        lines_ref.push_back(""); // Start with one empty line if the file is new
+        lines_ref.push_back("");
     }
-    std::string keyword_pattern = "\\b(PRINT|IF|THEN|ELSE|ENDIF|FOR|TO|NEXT|STEP|GOTO|FUNC|ENDFUNC|SUB|ENDSUB|RETURN|STOP|RESUME|DIM|AS|INTEGER|STRING|DOUBLE|DATE|LEFT\\$|RIGHT\\$|MID\\$|LEN|ASC|CHR\\$|INSTR|LCASE\\$|UCASE\\$|TRIM\\$|INKEY\\$|VAL|STR\\$|SIN|COS|TAN|SQR|RND|TICK|NOW|DATE\\$|TIME\\$|DATEADD|CVDATE|CLS|LOCATE|SLEEP|CURSOR|DIR|CD|PWD|COLOR|MKDIR|KILL)\\b";
-    keyword_regex = std::regex(keyword_pattern, std::regex::icase);
+    keywords = {
+        "PRINT", "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "NEXT", "STEP",
+        "GOTO", "FUNC", "ENDFUNC", "SUB", "ENDSUB", "RETURN", "STOP", "RESUME",
+        "DIM", "AS", "INTEGER", "STRING", "DOUBLE", "DATE", "LEFT$", "RIGHT$",
+        "MID$", "LEN", "ASC", "CHR$", "INSTR", "LCASE$", "UCASE$", "TRIM$",
+        "INKEY$", "VAL", "STR$", "SIN", "COS", "TAN", "SQR", "RND", "TICK",
+        "NOW", "DATE$", "TIME$", "DATEADD", "CVDATE", "CLS", "LOCATE", "SLEEP",
+        "CURSOR", "DIR", "CD", "PWD", "COLOR", "MKDIR", "KILL", "REM"
+    };
 }
-
-// In TextEditor.cpp, add this new function
-
-// In TextEditor.cpp, replace the old draw_line function
 
 void TextEditor::draw_line(const std::string& line) {
-    size_t pos = 0;
-    std::string line_upper = line;
-    std::transform(line_upper.begin(), line_upper.end(), line_upper.begin(), ::toupper);
-
-    while (pos < line.length()) {
-        // --- Precedence 1: Comments ---
-        // An apostrophe or a REM keyword starts a comment.
-        size_t comment_start_apos = line.find('\'', pos);
-        size_t rem_pos = std::string::npos;
-        if (line_upper.rfind("REM ", pos) == pos) {
-            rem_pos = pos;
-        }
-
-        if (comment_start_apos != std::string::npos || rem_pos != std::string::npos) {
-            size_t comment_start = (comment_start_apos < rem_pos) ? comment_start_apos : rem_pos;
-            TextIO::setColor(COLOR_DEFAULT, 0);
-            TextIO::print(line.substr(pos, comment_start - pos));
+    size_t i = 0;
+    while (i < line.length()) {
+        char current_char = line[i];
+        if (current_char == '\'') {
             TextIO::setColor(COLOR_COMMENT, 0);
-            TextIO::print(line.substr(comment_start));
-            return; // The rest of the line is a comment
+            TextIO::print(line.substr(i));
+            break;
         }
-
-        // --- Precedence 2: Strings ---
-        if (line[pos] == '"') {
-            size_t string_end = line.find('"', pos + 1);
-            if (string_end == std::string::npos) string_end = line.length();
-            else string_end++; // Include the closing quote
-
+        if (current_char == '"') {
+            size_t end_pos = line.find('"', i + 1);
+            if (end_pos == std::string::npos) end_pos = line.length();
+            else end_pos++;
             TextIO::setColor(COLOR_STRING, 0);
-            TextIO::print(line.substr(pos, string_end - pos));
-            pos = string_end;
+            TextIO::print(line.substr(i, end_pos - i));
+            i = end_pos;
             continue;
         }
-
-        // --- Precedence 3: Numbers ---
-        if (isdigit(line[pos])) {
-            size_t num_end = pos;
-            while (num_end < line.length() && (isdigit(line[num_end]) || line[num_end] == '.')) {
-                num_end++;
+        if (std::isdigit(static_cast<unsigned char>(current_char))) {
+            size_t end_pos = i;
+            while (end_pos < line.length() && (std::isdigit(static_cast<unsigned char>(line[end_pos])) || line[end_pos] == '.')) {
+                end_pos++;
             }
             TextIO::setColor(COLOR_NUMBER, 0);
-            TextIO::print(line.substr(pos, num_end - pos));
-            pos = num_end;
+            TextIO::print(line.substr(i, end_pos - i));
+            i = end_pos;
             continue;
         }
-
-        // --- Precedence 4: Keywords and default text ---
-        std::string search_area = line.substr(pos);
-        std::smatch match;
-        if (std::regex_search(search_area, match, keyword_regex) && match.prefix().length() == 0) {
-            // A keyword is at the current position
-            TextIO::setColor(COLOR_KEYWORD, 0);
-            TextIO::print(match[0].str());
-            pos += match[0].length();
+        if (std::isalpha(static_cast<unsigned char>(current_char))) {
+            size_t end_pos = i;
+            while (end_pos < line.length() && (std::isalnum(static_cast<unsigned char>(line[end_pos])) || line[end_pos] == '$')) {
+                end_pos++;
+            }
+            std::string word = line.substr(i, end_pos - i);
+            std::transform(word.begin(), word.end(), word.begin(), ::toupper);
+            if (keywords.count(word)) {
+                if (word == "REM") {
+                    TextIO::setColor(COLOR_COMMENT, 0);
+                    TextIO::print(line.substr(i));
+                    break;
+                }
+                TextIO::setColor(COLOR_KEYWORD, 0);
+            }
+            else {
+                TextIO::setColor(COLOR_DEFAULT, 0);
+            }
+            TextIO::print(line.substr(i, end_pos - i));
+            i = end_pos;
             continue;
         }
-
-        // --- Fallback: Print one character in default color ---
         TextIO::setColor(COLOR_DEFAULT, 0);
-        TextIO::print(std::string(1, line[pos]));
-        pos++;
+        TextIO::print(std::string(1, current_char));
+        i++;
     }
+    TextIO::setColor(COLOR_DEFAULT, 0);
 }
+
 void TextEditor::draw_status_bar() {
     TextIO::setCursor(false);
     TextIO::locate(screen_rows + 1, 1);
-    std::string status = " jdBasic Editor | Line: " + std::to_string(cy + 1) + " | ^S: Save | ^X: Exit ";
+    // Show filename and modification status
+    std::string status = " " + (filename.empty() ? "[No Name]" : filename) + (file_modified ? " * |" : " |");
+    status += " Line: " + std::to_string(cy + 1) + "/" + std::to_string(lines_ref.size()) + " | Col: " + std::to_string(cx + 1);
+    status += " | ^S:Save ^F:Find ^G:GoTo ^X:Exit ";
     if (status.length() < (size_t)screen_cols) {
         status += std::string(screen_cols - status.length(), ' ');
     }
     TextIO::print(status);
 
     TextIO::locate(screen_rows + 2, 1);
-    if (status_msg.length() < (size_t)screen_cols) {
-        status_msg += std::string(screen_cols - status_msg.length(), ' ');
+    // Clear the prompt line
+    std::string prompt_line(screen_cols, ' ');
+    if (!status_msg.empty()) {
+        prompt_line.replace(0, status_msg.length(), status_msg);
     }
-    TextIO::print(status_msg);
+    TextIO::print(prompt_line);
     status_msg.clear();
     TextIO::setCursor(true);
 }
 
-void TextEditor::debug(std::string msg) {
-    if (is_debug)
-        status_msg = " Debug: " + msg;
-    else
-        status_msg.clear();
-}
-
 void TextEditor::draw_screen() {
-    TextIO::setColor(COLOR_DEFAULT, 0); // Set default color
+    TextIO::setColor(COLOR_DEFAULT, 0);
     TextIO::clearScreen();
-    for (int y = 0; y < screen_rows - 1; ++y) {
+    for (int y = 0; y < screen_rows; ++y) {
         int file_row = top_row + y;
         TextIO::locate(y + 1, 1);
         if (file_row < lines_ref.size()) {
-            draw_line(lines_ref[file_row]); // Use our new highlighting function
+            draw_line(lines_ref[file_row]);
         }
         else {
-            TextIO::setColor(8, 0); // Gray for tilde
+            TextIO::setColor(8, 0);
             TextIO::print("~");
         }
     }
-    TextIO::setColor(COLOR_DEFAULT, 0); // Reset color for status bar
+    TextIO::setColor(COLOR_DEFAULT, 0);
     draw_status_bar();
 }
 
 void TextEditor::move_cursor(int key) {
-    debug("S: " + std::to_string(key));
     switch (key) {
-    case 72: // Arrow Up
-        if (cy > 0) cy--;
-        break;
-    case 80: // Arrow Down
-        if (cy < lines_ref.size() - 1) cy++;
-        break;
-    case 75: // Arrow Left
-        if (cx > 0) cx--;
-        break;
-    case 77: // Arrow Right
-        if (cy < lines_ref.size() && cx < lines_ref[cy].length()) cx++;
-        break;
-    case 73: // Page Up
-        cy = (cy < screen_rows) ? 0 : cy - (screen_rows - 1);
-        break;
-    case 81: // Page Down
-        cy += (screen_rows - 1);
-        if (cy >= lines_ref.size()) cy = lines_ref.size() - 1;
-        break;
+    case 72: if (cy > 0) cy--; break; // Up
+    case 80: if (cy < lines_ref.size() - 1) cy++; break; // Down
+    case 75: if (cx > 0) cx--; break; // Left
+    case 77: if (cy < lines_ref.size() && cx < lines_ref[cy].length()) cx++; break; // Right
+    case 73: cy = (cy < screen_rows) ? 0 : cy - screen_rows; break; // Page Up
+    case 81: cy += screen_rows; if (cy >= lines_ref.size()) cy = lines_ref.size() - 1; break; // Page Down
+    case 71: cx = 0; cy = 0; break; // Home (Ctrl+Home)
+    case 79: cx = lines_ref.back().length(); cy = lines_ref.size() - 1; break; // End (Ctrl+End)
     }
-
-    // --- SCROLLING LOGIC ---
-    if (cy < top_row) {
-        top_row = cy;
-    }
-    if (cy >= top_row + screen_rows) {
-        top_row = cy - screen_rows + 1;
-    }
-
-    // Snap cursor to end of line if it's past the end
-    if (cy < lines_ref.size() && cx > lines_ref[cy].length()) {
-        cx = lines_ref[cy].length();
-    }
+    if (cy < top_row) top_row = cy;
+    if (cy >= top_row + screen_rows) top_row = cy - screen_rows + 1;
+    if (cy < lines_ref.size() && cx > lines_ref[cy].length()) cx = lines_ref[cy].length();
 }
 
-void TextEditor::process_keypress(int c) { // Note the new 'int c' parameter
+void TextEditor::process_keypress(int c) {
     if (c == 224 || c == 0) {
-        int key = _getch();
-        if (key == 83) { // Delete Key
-            if (cx < lines_ref[cy].length()) {
-                lines_ref[cy].erase(cx, 1);
-            }
-            else if (cy < lines_ref.size() - 1) {
-                // Join with next line
-                lines_ref[cy] += lines_ref[cy + 1];
-                lines_ref.erase(lines_ref.begin() + cy + 1);
-            }
-        }
-        else {
-            move_cursor(key);
-        }
+        move_cursor(_getch());
         return;
     }
-    debug("N: " + std::to_string(c));
     switch (c) {
-        // Ctrl key commands are handled by the caller (run loop)
-    case CTRL_KEY('x'):
-    case CTRL_KEY('s'):
-    case CTRL_KEY('d'):
-        break;
-
-    case 13: // Enter key
-        if (cx == lines_ref[cy].length()) {
-            lines_ref.insert(lines_ref.begin() + cy + 1, "");
-        }
+    case 13: // Enter
+        if (cx == lines_ref[cy].length()) lines_ref.insert(lines_ref.begin() + cy + 1, "");
         else {
             std::string line_end = lines_ref[cy].substr(cx);
             lines_ref[cy].erase(cx);
             lines_ref.insert(lines_ref.begin() + cy + 1, line_end);
         }
-        cy++;
-        cx = 0;
+        cy++; cx = 0; file_modified = true;
         break;
-
     case 8: // Backspace
-        if (cx > 0) {
-            lines_ref[cy].erase(cx - 1, 1);
-            cx--;
-        }
+        if (cx > 0) { lines_ref[cy].erase(cx - 1, 1); cx--; file_modified = true; }
         else if (cy > 0) {
             cx = lines_ref[cy - 1].length();
             lines_ref[cy - 1] += lines_ref[cy];
             lines_ref.erase(lines_ref.begin() + cy);
-            cy--;
+            cy--; file_modified = true;
         }
         break;
-
-    default: // Insert any other character
-        if (isprint(c)) { // Only print printable characters
+    case 127: case 9: // DEL or TAB not handled yet
+        break;
+    default:
+        if (isprint(c)) {
             lines_ref[cy].insert(cx, 1, (char)c);
-            cx++;
+            cx++; file_modified = true;
         }
         break;
     }
 }
 
+// --- IMPLEMENTATION OF NEW FEATURES ---
+
+std::string TextEditor::prompt_user(const std::string& prompt, const std::string& default_val) {
+    std::string input = default_val;
+    while (true) {
+        status_msg = prompt + input;
+        draw_status_bar();
+        TextIO::locate(screen_rows + 2, prompt.length() + input.length() + 1);
+        int key = _getch();
+        if (key == 13) { // Enter
+            status_msg = "";
+            return input;
+        }
+        else if (key == 27) { // Escape
+            status_msg = "";
+            return "";
+        }
+        else if (key == 8 && !input.empty()) { // Backspace
+            input.pop_back();
+        }
+        else if (isprint(key)) {
+            input += (char)key;
+        }
+    }
+}
+
+void TextEditor::save_file() {
+    if (filename.empty()) {
+        filename = prompt_user("Save as: ");
+        if (filename.empty()) {
+            status_msg = "Save aborted.";
+            return;
+        }
+    }
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        status_msg = "Error writing to file!";
+        return;
+    }
+    for (const auto& line : lines_ref) {
+        outfile << line << '\n';
+    }
+    outfile.close();
+    status_msg = "File saved successfully.";
+    file_modified = false;
+}
+
+void TextEditor::find_text() {
+    int saved_cx = cx, saved_cy = cy, saved_top = top_row;
+    last_search_query = prompt_user("Find (ESC to cancel): ", last_search_query);
+    if (last_search_query.empty()) return;
+
+    for (size_t i = 0; i < lines_ref.size(); ++i) {
+        int current_line = (saved_cy + i) % lines_ref.size();
+        size_t match_pos = lines_ref[current_line].find(last_search_query, (current_line == saved_cy) ? saved_cx + 1 : 0);
+        if (match_pos != std::string::npos) {
+            cy = current_line;
+            cx = match_pos;
+            top_row = cy; // Center the found line
+            return;
+        }
+    }
+    status_msg = "Text not found: " + last_search_query;
+}
+
+void TextEditor::go_to_line() {
+    std::string line_num_str = prompt_user("Go to line: ");
+    if (line_num_str.empty()) return;
+    try {
+        int line_num = std::stoi(line_num_str);
+        if (line_num > 0 && line_num <= lines_ref.size()) {
+            cy = line_num - 1;
+            cx = 0;
+        }
+        else {
+            status_msg = "Line number out of range.";
+        }
+    }
+    catch (...) {
+        status_msg = "Invalid number.";
+    }
+}
 
 void TextEditor::run() {
     int key;
     TextIO::setCursor(true);
     while (true) {
         draw_screen();
-        // Position the real cursor
         TextIO::locate(cy - top_row + 1, cx + 1);
-
-        // Read the keypress in ONE place
         key = _getch();
 
-        // Handle commands first
-        if (key == CTRL_KEY('x')) {
-            TextIO::locate(screen_rows + 1, 1);
-            break; // Exit loop
+        if (key == CTRL_KEY('x')) { break; }
+        else if (key == CTRL_KEY('s')) { save_file(); }
+        else if (key == CTRL_KEY('f')) { find_text(); }
+        else if (key == CTRL_KEY('g')) { go_to_line(); }
+        else if (key == 224 || key == 0) { // Special keys like arrows, F3, etc.
+            int ex_key = _getch();
+            if (ex_key == 61 && !last_search_query.empty()) { // F3 for Find Next
+                find_text();
+            }
+            else {
+                move_cursor(ex_key);
+            }
         }
-        else if (key == CTRL_KEY('s')) {
-            status_msg = "Save command issued! (Save on exit)";
-            continue; // Redraw screen with new status message
+        else {
+            process_keypress(key);
         }
-        else if (key == CTRL_KEY('d')) {
-            is_debug = !is_debug;
-            continue; 
-        }
-
-        // Process all other keys
-        process_keypress(key);
     }
-    TextIO::setColor(2, 0); // Reset color on exit
+    TextIO::setColor(2, 0);
+    TextIO::clearScreen();
     TextIO::setCursor(true);
 }
