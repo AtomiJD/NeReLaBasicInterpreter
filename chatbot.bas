@@ -51,8 +51,7 @@ DO
     INPUT "> "; USER_PROMPT$
 
     IF LCASE$(USER_PROMPT$) = "exit" OR LCASE$(USER_PROMPT$) = "quit" THEN
-        PRINT "Goodbye!"
-        GOTO ENDE
+       GOTO ENDE
     ENDIF
 
     PRINT "Sending to OpenAI..."

@@ -103,9 +103,13 @@ bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
         return false;
     }
     TextIO::print("LOADING " + filename + "\n");
-    std::stringstream buffer;
-    buffer << infile.rdbuf();
-    source_code = buffer.str();
+    // Read the entire file into the source_code string
+    source_lines.clear();
+    std::string line;
+    while (std::getline(infile, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        source_lines.push_back(line);
+    }
     return true;
 }
 
