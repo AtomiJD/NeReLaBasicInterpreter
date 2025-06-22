@@ -234,6 +234,53 @@ std::string wildcard_to_regex(const std::string& wildcard) {
 
 // --- NEW: JSON Functionality ---
 
+// Forward declaration for recursive conversion
+nlohmann::json basic_to_json_value(const BasicValue& val);
+
+// Helper function to convert a BasicValue into a nlohmann::json object.
+nlohmann::json basic_to_json_value(const BasicValue& val) {
+    return std::visit([](auto&& arg) -> nlohmann::json {
+        using T = std::decay_t<decltype(arg)>;
+
+        if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, double> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
+            return nlohmann::json(arg);
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
+            if (!arg) return nlohmann::json::array();
+            nlohmann::json j_arr = nlohmann::json::array();
+            for (const auto& elem : arg->data) {
+                j_arr.push_back(basic_to_json_value(elem));
+            }
+            return j_arr;
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
+            if (!arg) return nlohmann::json::object();
+            nlohmann::json j_obj = nlohmann::json::object();
+            for (const auto& pair : arg->data) {
+                j_obj[pair.first] = basic_to_json_value(pair.second);
+            }
+            return j_obj;
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
+            // If we encounter a JsonObject, just return its internal data.
+            return arg ? arg->data : nlohmann::json(nullptr);
+        }
+        else if constexpr (std::is_same_v<T, DateTime> || std::is_same_v<T, FunctionRef>) {
+            // Convert these types to their string representation
+            return nlohmann::json(to_string(arg));
+        }
+#ifdef JDCOM
+        else if constexpr (std::is_same_v<T, ComObject>) {
+            return nlohmann::json("<COM Object>");
+        }
+#endif
+        else {
+            // Should not be reached if all types are handled. Return null.
+            return nlohmann::json(nullptr);
+        }
+        }, val);
+}
+
 // Helper function to convert a nlohmann::json object to a BasicValue
 // This is essential for accessing parts of the parsed JSON from BASIC.
 BasicValue json_to_basic_value(const nlohmann::json& j) {
@@ -295,6 +342,28 @@ BasicValue builtin_json_parse(NeReLaBasic& vm, const std::vector<BasicValue>& ar
         Error::set(1, vm.runtime_current_line); // Syntax Error (or a new "Invalid JSON" error)
         TextIO::print("JSON Parse Error: " + std::string(e.what()) + "\n");
         return {};
+    }
+}
+
+// JSON.STRINGIFY$(basic_value) -> string$
+BasicValue builtin_json_stringify(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return std::string("");
+    }
+
+    const BasicValue& val_to_stringify = args[0];
+
+    try {
+        nlohmann::json j = basic_to_json_value(val_to_stringify);
+        // dump() with no arguments creates a compact string, ideal for API calls.
+        // For pretty-printing, you could use j.dump(4)
+        return j.dump();
+    }
+    catch (const std::exception& e) {
+        Error::set(15, vm.runtime_current_line); // Type Mismatch or other conversion error
+        TextIO::print("JSON Stringify Error: " + std::string(e.what()) + "\n");
+        return std::string("");
     }
 }
 
@@ -1497,13 +1566,13 @@ BasicValue builtin_getenv_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     }
 
 #ifdef _WIN32
-        // --- Windows-specific, secure version ---
-        char* buffer = nullptr;
+    // --- Windows-specific, secure version ---
+    char* buffer = nullptr;
     size_t size = 0;
 
     // _dupenv_s allocates memory for the buffer and must be freed later.
     errno_t err = _dupenv_s(&buffer, &size, var_name.c_str());
-    
+
     // Check if it succeeded and the buffer is valid
     if (err == 0 && buffer != nullptr) {
         std::string value(buffer);
@@ -1515,14 +1584,14 @@ BasicValue builtin_getenv_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     }
 
 #else
-// --- Standard C++ version for other platforms (Linux, macOS) ---
-char* value = std::getenv(var_name.c_str());
-if (value == nullptr) {
-    return std::string(""); // Not found
-}
-else {
-    return std::string(value); // Found
-}
+    // --- Standard C++ version for other platforms (Linux, macOS) ---
+    char* value = std::getenv(var_name.c_str());
+    if (value == nullptr) {
+        return std::string(""); // Not found
+    }
+    else {
+        return std::string(value); // Found
+    }
 #endif
 }
 
@@ -1993,7 +2062,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
         info.arity = arity;
         info.native_impl = func_ptr;
         table_to_populate[to_upper(info.name)] = info;
-    };
+        };
 
     // --- Register String Functions ---
     register_func("LEFT$", 2, builtin_left_str);
@@ -2010,7 +2079,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
     register_func("SPLIT", 2, builtin_split);
-    
+
     // --- Register Math Functions ---
     register_func("SIN", 1, builtin_sin);
     register_func("COS", 1, builtin_cos);
@@ -2062,7 +2131,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     // --- Register Methods ---
 #ifdef SDL3
     register_proc("SCREEN", -1, builtin_screen);
-    register_proc("PSET", -1, builtin_pset); 
+    register_proc("PSET", -1, builtin_pset);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
     register_proc("LINE", -1, builtin_line);     // <-- ADD THIS
     register_proc("RECT", -1, builtin_rect);     // <-- ADD THIS
@@ -2082,12 +2151,13 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("HTTPPUT$", 3, builtin_httpput);
 #endif
     register_func("JSON.PARSE$", 1, builtin_json_parse);
+    register_func("JSON.STRINGIFY$", 1, builtin_json_stringify);
 
 
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
     register_proc("LOCATE", 2, builtin_locate);
-    register_proc("SLEEP", 1, builtin_sleep);  
+    register_proc("SLEEP", 1, builtin_sleep);
     register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);
     register_func("GETENV$", 1, builtin_getenv_str);
@@ -2096,8 +2166,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("CD", 1, builtin_cd);
     register_proc("PWD", 0, builtin_pwd);
     register_proc("COLOR", 2, builtin_color);
-    register_proc("MKDIR", 1, builtin_mkdir); 
-    register_proc("KILL", 1, builtin_kill);   
+    register_proc("MKDIR", 1, builtin_mkdir);
+    register_proc("KILL", 1, builtin_kill);
 
     register_func("CSVREADER", -1, builtin_csvreader); // -1 for optional args
     register_func("TXTREADER$", 1, builtin_txtreader_str);
@@ -2105,4 +2175,3 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("CSVWRITER", -1, builtin_csvwriter); // -1 for optional delimiter
 
 }
-

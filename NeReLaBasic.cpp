@@ -75,7 +75,7 @@ void trim(std::string& s) {
     size_t end = s.find_last_not_of(" \t\n\r");
 
     if (start == std::string::npos)
-        s.clear();  
+        s.clear();
     else
         s = s.substr(start, end - start + 1);
 }
@@ -304,14 +304,24 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             prgptr = suffix_ptr;
             return Tokens::ID::CALLFUNC;
         }
-        if (action_suffix == '[') {
-            prgptr = suffix_ptr;
-            return Tokens::ID::ARRAY_ACCESS;
+
+        // --- MODIFIED LOGIC FOR ACCESSORS ---
+        // If at the start of a statement, an identifier followed by a bracket is an assignment target.
+        // This is a LET statement, so we generate a special token for the do_let command.
+        if (is_start_of_statement) {
+            if (action_suffix == '[') {
+                prgptr = suffix_ptr;
+                return Tokens::ID::ARRAY_ACCESS;
+            }
+            if (action_suffix == '{') {
+                prgptr = suffix_ptr;
+                return Tokens::ID::MAP_ACCESS;
+            }
         }
-        if (action_suffix == '{') { // <-- ADD THIS BLOCK
-            prgptr = suffix_ptr;
-            return Tokens::ID::MAP_ACCESS;
-        }
+        // If not at the start of a statement, it's part of an expression.
+        // The brackets will be tokenized separately as C_LEFTBRACKET / C_LEFTBRACE,
+        // allowing the expression evaluator to handle chained calls.
+
         if (action_suffix == '@') {
             prgptr = suffix_ptr + 1;
             return Tokens::ID::FUNCREF;
@@ -333,13 +343,13 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             if (lineinput[prgptr + 1] == '>') { prgptr += 2; return Tokens::ID::C_NE; }
             if (lineinput[prgptr + 1] == '=') { prgptr += 2; return Tokens::ID::C_LE; }
         }
-        prgptr++; 
+        prgptr++;
         return Tokens::ID::C_LT;
     case '>':
         if (prgptr + 1 < lineinput.length() && lineinput[prgptr + 1] == '=') {
             prgptr += 2; return Tokens::ID::C_GE;
         }
-        prgptr++; 
+        prgptr++;
         return Tokens::ID::C_GT;
     }
 
@@ -357,7 +367,7 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case '=': return Tokens::ID::C_EQ;
     case '[': return Tokens::ID::C_LEFTBRACKET;
     case ']': return Tokens::ID::C_RIGHTBRACKET;
-    case '{': return Tokens::ID::C_LEFTBRACE; 
+    case '{': return Tokens::ID::C_LEFTBRACE;
     case '}': return Tokens::ID::C_RIGHTBRACE;
     case ':': return Tokens::ID::C_COLON;
     }
@@ -833,7 +843,7 @@ bool NeReLaBasic::compile_module(const std::string& module_name, const std::stri
 
     TextIO::print("Compiling dependent module: " + module_name + "\n");
 
-    // --- NEW: No temporary compiler instance. ---
+    // --- No temporary compiler instance. ---
     // We compile the module using our own instance's state, but direct the output
     // into the module's own data structures within the `compiled_modules` map.
 
@@ -1190,7 +1200,7 @@ void NeReLaBasic::statement() {
 
     case Tokens::ID::VARIANT:
     case Tokens::ID::INT:
-    case Tokens::ID::STRVAR: 
+    case Tokens::ID::STRVAR:
     case Tokens::ID::ARRAY_ACCESS:
     case Tokens::ID::MAP_ACCESS:
         //pcode++;
@@ -1209,7 +1219,7 @@ void NeReLaBasic::statement() {
         break;
     case Tokens::ID::IF:
         pcode++;
-        Commands::do_if(*this); 
+        Commands::do_if(*this);
         break;
     case Tokens::ID::ELSE:
         pcode++;
@@ -1288,7 +1298,7 @@ void NeReLaBasic::statement() {
         Commands::do_save(*this);
         break;
 
-    case Tokens::ID::COMPILE: 
+    case Tokens::ID::COMPILE:
         pcode++;
         Commands::do_compile(*this);
         break;
@@ -1361,7 +1371,8 @@ BasicValue NeReLaBasic::parse_array_literal() {
     }
     if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
         Error::set(16, runtime_current_line); return false;
-    } else
+    }
+    else
         pcode++; // Consume ']'
 
     // --- Now, construct the Array object from the parsed elements ---
@@ -1396,370 +1407,179 @@ BasicValue NeReLaBasic::parse_array_literal() {
 
 // Level 5: Handles highest-precedence items
 BasicValue NeReLaBasic::parse_primary() {
+    BasicValue current_value;
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
+    // Step 1: Get the base of the expression chain.
+    // It can be a variable, a literal, a function call, or a parenthesized expression.
     if (token == Tokens::ID::JD_TRUE) {
-        pcode++; return true;
+        pcode++;
+        current_value = true;
     }
-    if (token == Tokens::ID::JD_FALSE) {
-        pcode++; return false;
+    else if (token == Tokens::ID::JD_FALSE) {
+        pcode++;
+        current_value = false;
     }
-    if (token == Tokens::ID::NUMBER) {
+    else if (token == Tokens::ID::NUMBER) {
         pcode++; // Consume the NUMBER token
         double value;
-
-        // Read the raw 8 bytes of the double from our bytecode
         memcpy(&value, &(*active_p_code)[pcode], sizeof(double));
-
-        // Advance the program counter by the size of a double
         pcode += sizeof(double);
-
-        return value;
+        current_value = value;
     }
-    if (token == Tokens::ID::CONSTANT) {
-        pcode++; // Consume CONSTANT token
-        std::string const_name = read_string(*this);
-        // Look up the constant's value in our table and return it
-        return builtin_constants.at(const_name);
-    }
-    if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
-        pcode++;
-        std::string var_or_qual_name = read_string(*this); // Reads "VARNAME" or "VARNAME.MEMBER" or "MODULE.FUNC"
-
-#ifdef JDCOM
-        if (active_function_table->count(to_upper(var_or_qual_name))) {
-            // If it's recognized as a function name (e.g., "MATH.ADD" or a simple "MyFunc"),
-            // but is not followed by a C_LEFTPAREN (which would be handled by CALLFUNC token),
-            // then it's an error. Or, perhaps it's a FUNCREF if that's the intent.
-            // For now, if it's a function name here, but not a CALLFUNC token, it's problematic.
-            // Let's assume CALLFUNC is the ONLY way function calls are triggered for expressions.
-            // If this path is hit, it implies trying to use a function name as a variable.
-            // So, for now, let it fall through to get_variable().
-            // This is complex, but the `CALLFUNC` token will ensure proper dispatch.
-        }
-        size_t dot_pos = var_or_qual_name.find('.');
-        if (dot_pos != std::string::npos) {
-            // We have a qualified name: "objOrModule.member"
-            std::string base_name = var_or_qual_name.substr(0, dot_pos);
-            std::string member_name = var_or_qual_name.substr(dot_pos + 1);
-
-            // First, try to resolve as a ComObject member access
-            BasicValue& base_var = get_variable(*this, to_upper(base_name));
-
-            if (std::holds_alternative<ComObject>(base_var)) {
-                IDispatchPtr pDisp = std::get<ComObject>(base_var).ptr;
-                if (!pDisp) {
-                    Error::set(1, runtime_current_line); // Object not initialized
-                    return false;
-                }
-
-                // Assume it's a property GET for now.
-                // If it were a method call, CALLFUNC token would have been used.
-                _variant_t result_vt;
-                HRESULT hr = invoke_com_method(pDisp, member_name, {}, result_vt, DISPATCH_PROPERTYGET);
-                if (FAILED(hr)) {
-                    Error::set(12, runtime_current_line); // General COM error
-                    // You might want to get more specific COM error info here
-                    return false;
-                }
-                return variant_t_to_basic_value(result_vt, *this);
-            }
-            // else if it's not a ComObject, it must be a module function/variable access (handled by other parts of the VM)
-            // For example, your `get_variable` might already handle module-qualified names if `variables` is global.
-            // If `get_variable` doesn't handle module prefixes, you'd need to expand that logic.
-            // For now, assuming your `get_variable` correctly fetches the module-qualified function reference.
-            else {
-                // It's a module.function or module.variable that isn't a COM object.
-                // This will then fall through to the CALLFUNC handler or variable lookup.
-                // This path implies that module functions are explicitly handled elsewhere,
-                // likely by being added to the active_function_table with mangled names.
-                // For direct variable lookup like `MODULE.VAR`, `get_variable` needs to handle it.
-                // Given your current `get_variable` relies on `variables` map, if module variables
-                // are directly in there, it will work. Otherwise, more logic needed.
-                Error::set(3, runtime_current_line); // Variable not found or unknown module member
-                return false;
-            }
-        }
-        else {
-#endif
-            // No dot, so it's a simple variable name (e.g., "MYVAR" or "i")
-            return get_variable(*this, to_upper(var_or_qual_name));
-#ifdef JDCOM
-        }
-#endif
-    }
-    if (token == Tokens::ID::FUNCREF) {
-        pcode++; // Consume FUNCREF token
-        std::string func_name = "";
-        while ((*active_p_code)[pcode] != 0) { func_name += (*active_p_code)[pcode++]; }
-        pcode++; // consume null
-
-        // Return a BasicValue containing our new FunctionRef type
-        return FunctionRef{ to_upper(func_name) };
-    }
-    if (token == Tokens::ID::STRING) {
+    else if (token == Tokens::ID::STRING) {
         pcode++; // Consume STRING token
-        std::string s_val;
-        // Read the null-terminated string from bytecode
-        while ((*active_p_code)[pcode] != 0) { s_val += (*active_p_code)[pcode++]; }
-        pcode++; // consume null
-        return s_val;
+        current_value = read_string(*this);
     }
-    if (token == Tokens::ID::ARRAY_ACCESS) {
-        pcode++; // Consume ARRAY_ACCESS token
-        std::string var_name = to_upper(read_string(*this));
-
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTBRACKET) {
-            Error::set(1, runtime_current_line); return false;
-        }
-
-        // --- Multi-dimensional Index Parsing ---
-        std::vector<size_t> indices;
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
-            while (true) {
-                BasicValue index_val = evaluate_expression();
-                if (Error::get() != 0) return false;
-                indices.push_back(static_cast<size_t>(to_double(index_val)));
-
-                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                if (separator == Tokens::ID::C_RIGHTBRACKET) break;
-                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
-                pcode++;
-            }
-        }
-
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-            Error::set(1, runtime_current_line); return false;
-        }
-
-        BasicValue& var = get_variable(*this, var_name);
-        if (std::holds_alternative<std::shared_ptr<Array>>(var)) {
-            const auto& arr_ptr = std::get<std::shared_ptr<Array>>(var);
-            if (!arr_ptr) { Error::set(15, runtime_current_line); return false; }
-            try {
-                size_t flat_index = arr_ptr->get_flat_index(indices);
-                return arr_ptr->data[flat_index];
-            }
-            catch (const std::exception&) {
-                Error::set(10, runtime_current_line); return false;
-            }
-        }
-        else if (std::holds_alternative<std::shared_ptr<JsonObject>>(var)) {
-            const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(var);
-            if (!json_ptr) { Error::set(15, runtime_current_line); return false; }
-            if (indices.size() != 1) { Error::set(10, runtime_current_line); return false; } // JSON arrays are 1D
-
-            try {
-                // Access the JSON array element and convert it back to a BasicValue
-                const auto& json_element = json_ptr->data.at(indices[0]);
-                return json_to_basic_value(json_element);
-            }
-            catch (const std::exception&) {
-                Error::set(10, runtime_current_line); // Index out of bounds or other JSON error
-                return false;
-            }
-        }
-        else {
-            Error::set(15, runtime_current_line); // Type Mismatch
-            return false;
-        }
+    else if (token == Tokens::ID::CONSTANT) {
+        pcode++; // Consume CONSTANT token
+        current_value = builtin_constants.at(read_string(*this));
     }
-    if (token == Tokens::ID::MAP_ACCESS) { 
-        pcode++; // Consume MAP_ACCESS token
-        std::string var_name = to_upper(read_string(*this));
-
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTBRACE) {
-            Error::set(1, runtime_current_line); return false;
-        }
-        BasicValue key_val = evaluate_expression();
-        if (Error::get() != 0) return false;
-        std::string key = to_string(key_val);
-
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACE) {
-            Error::set(1, runtime_current_line); return false;
-        }
-
-        BasicValue& var = get_variable(*this, var_name);
-        if (std::holds_alternative<std::shared_ptr<Map>>(var)) {
-            const auto& map_ptr = std::get<std::shared_ptr<Map>>(var);
-            if (!map_ptr) { Error::set(15, runtime_current_line); return false; }
-            if (map_ptr->data.count(key)) {
-                return map_ptr->data.at(key);
-            }
-            else {
-                return 0.0; // Key not found
-            }
-        }
-        else if (std::holds_alternative<std::shared_ptr<JsonObject>>(var)) {
-            const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(var);
-            if (!json_ptr) { Error::set(15, runtime_current_line); return false; }
-            try {
-                // Access the JSON object member and convert it back to a BasicValue
-                const auto& json_element = json_ptr->data.at(key);
-                return json_to_basic_value(json_element);
-            }
-            catch (const std::exception&) {
-                Error::set(3, runtime_current_line); // Variable not found (for JSON key)
-                return false;
-            }
-        }
-        else {
-            Error::set(15, runtime_current_line); // Type Mismatch
-            return false;
-        }
-    }  
-    if (token == Tokens::ID::C_LEFTBRACKET) {
-        return parse_array_literal();
-    }
-
-    if (token == Tokens::ID::C_LEFTPAREN) {
+    else if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
         pcode++;
-        auto result = evaluate_expression();
-        pcode++;
-        return result;
+        std::string var_name = to_upper(read_string(*this));
+        current_value = get_variable(*this, var_name);
     }
-    if (token == Tokens::ID::CALLFUNC) {
+    else if (token == Tokens::ID::FUNCREF) {
+        pcode++;
+        current_value = FunctionRef{ to_upper(read_string(*this)) };
+    }
+    else if (token == Tokens::ID::C_LEFTBRACKET) {
+        current_value = parse_array_literal();
+    }
+    else if (token == Tokens::ID::C_LEFTPAREN) {
+        pcode++;
+        current_value = evaluate_expression();
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            Error::set(18, runtime_current_line);
+            return {};
+        }
+        pcode++; // Consume ')'
+    }
+    else if (token == Tokens::ID::CALLFUNC) {
         pcode++; // Consume CALLFUNC token
         std::string identifier_being_called = to_upper(read_string(*this));
         std::string real_func_to_call = identifier_being_called;
 
-#ifdef JDCOM
-        // Check if it's an object method call
-        size_t dot_pos = identifier_being_called.find('.');
-        if (dot_pos != std::string::npos) {
-            std::string obj_var_name = identifier_being_called.substr(0, dot_pos);
-            std::string member_name = identifier_being_called.substr(dot_pos + 1); // e.g., "Sheets" or "Cells"
+        if (!active_function_table->count(real_func_to_call)) {
+            BasicValue& var = get_variable(*this, identifier_being_called);
+            if (std::holds_alternative<FunctionRef>(var)) {
+                real_func_to_call = std::get<FunctionRef>(var).name;
+            }
+        }
 
-            // First, try to find it in the current function table (for module functions like MATH.ADD)
-            // This needs to be checked BEFORE trying to interpret it as a COM object.
-            if (active_function_table->count(identifier_being_called)) {
-                // It's a module function or a higher-order function reference.
-                // Delegate to the common BASIC function execution logic.
-                const auto& func_info = active_function_table->at(identifier_being_called);
-                std::vector<BasicValue> args;
-                // Parse arguments (identical to existing logic below)
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return false; }
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                    while (true) {
-                        args.push_back(evaluate_expression()); if (Error::get() != 0) return false;
-                        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                        if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; } pcode++;
-                    }
-                }
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) { Error::set(18, runtime_current_line); return false; }
-                else pcode++; // Consume ')'
-                if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return false; }
-                return execute_function_for_value(func_info, args);
+        if (!active_function_table->count(real_func_to_call)) {
+            Error::set(22, runtime_current_line);
+            return false;
+        }
+
+        const auto& func_info = active_function_table->at(real_func_to_call);
+        std::vector<BasicValue> args;
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
+            Error::set(1, runtime_current_line); return false;
+        }
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            while (true) {
+                args.push_back(evaluate_expression());
+                if (Error::get() != 0) return false;
+                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
+                pcode++;
             }
-            BasicValue& com_obj_val = get_variable(*this, to_upper(obj_var_name));
-            if (!std::holds_alternative<ComObject>(com_obj_val)) {
-                Error::set(15, runtime_current_line); // Type Mismatch: Not a COM object
-                return false;
-            }
-            IDispatchPtr pDisp = std::get<ComObject>(com_obj_val).ptr;
-            if (!pDisp) {
-                Error::set(1, runtime_current_line); // Object not initialized
-                return false;
+        }
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTPAREN) {
+            Error::set(18, runtime_current_line); return false;
+        }
+
+        if (func_info.arity != -1 && args.size() != func_info.arity) {
+            Error::set(26, runtime_current_line); return false;
+        }
+        current_value = execute_function_for_value(func_info, args);
+    }
+    // Note: The specific ARRAY_ACCESS and MAP_ACCESS tokens are now only used for LHS assignments in `do_let`.
+    // The expression parser now handles accessors dynamically in the loop below.
+    else {
+        Error::set(1, runtime_current_line); // Syntax error / Invalid start of expression
+        return {};
+    }
+
+    if (Error::get() != 0) return {};
+
+    // Step 2: Loop to handle chained accessors like [...] and {...}
+    while (true) {
+        Tokens::ID accessor_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+
+        if (accessor_token == Tokens::ID::C_LEFTBRACKET) { // Array access: [...]
+            pcode++; // Consume '['
+
+            BasicValue index_val = evaluate_expression();
+            if (Error::get() != 0) return {};
+
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+                Error::set(16, runtime_current_line); return {};
             }
 
-            std::vector<BasicValue> com_args;
-            // Parse arguments within parentheses
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
-                Error::set(1, runtime_current_line); return false;
-            }
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                while (true) {
-                    com_args.push_back(evaluate_expression());
-                    if (Error::get() != 0) return false;
-                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
-                    pcode++;
+            size_t index = static_cast<size_t>(to_double(index_val));
+
+            if (std::holds_alternative<std::shared_ptr<Array>>(current_value)) {
+                const auto& arr_ptr = std::get<std::shared_ptr<Array>>(current_value);
+                if (!arr_ptr || index >= arr_ptr->data.size()) {
+                    Error::set(10, runtime_current_line); return {};
                 }
+                // --- FIX: Copy to a temporary before assignment to avoid use-after-free ---
+                BasicValue next_val = arr_ptr->data[index];
+                current_value = std::move(next_val);
             }
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                Error::set(18, runtime_current_line); return false;
+            else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
+                const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
+                if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) {
+                    Error::set(10, runtime_current_line); return {};
+                }
+                // This is safe because json_to_basic_value creates a new object
+                current_value = json_to_basic_value(json_ptr->data[index]);
             }
             else {
-                pcode++; // Consume ')'
+                Error::set(15, runtime_current_line); return {}; // Type Mismatch
             }
-
-            _variant_t result_vt;
-            HRESULT hr;
-
-            // --- Try DISPATCH_PROPERTYGET first if arguments are present ---
-            if (!com_args.empty()) { // If there are arguments, it might be an indexed property get
-                hr = invoke_com_method(pDisp, member_name, com_args, result_vt, DISPATCH_PROPERTYGET);
-                if (SUCCEEDED(hr)) {
-                    return variant_t_to_basic_value(result_vt, *this);
-                }
-                // If PropertyGet with args failed, it might be a regular method.
-                // Fall through to try as DISPATCH_METHOD.
-            }
-
-            // If it was a simple property get (no args) or if PropertyGet with args failed, try as method.
-            hr = invoke_com_method(pDisp, member_name, com_args, result_vt, DISPATCH_METHOD);
-            if (FAILED(hr)) {
-                // If both attempts fail, then report the error
-                Error::set(12, runtime_current_line); // General COM error (or a more specific one if needed)
-                return false;
-            }
-            return variant_t_to_basic_value(result_vt, *this);
         }
-        else
-        {
-#endif
-            // Check for higher-order function calls
-            if (!active_function_table->count(real_func_to_call)) {
-                BasicValue& var = get_variable(*this, identifier_being_called);
-                if (std::holds_alternative<FunctionRef>(var)) {
-                    real_func_to_call = std::get<FunctionRef>(var).name;
+        else if (accessor_token == Tokens::ID::C_LEFTBRACE) { // Map access: {...}
+            pcode++; // Consume '{'
+
+            BasicValue key_val = evaluate_expression();
+            if (Error::get() != 0) return {};
+            std::string key = to_string(key_val);
+
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACE) {
+                Error::set(17, runtime_current_line); return {};
+            }
+
+            if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
+                const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
+                if (!map_ptr || map_ptr->data.find(key) == map_ptr->data.end()) {
+                    Error::set(3, runtime_current_line); return {};
                 }
+                // --- FIX: Copy to a temporary before assignment to avoid use-after-free ---
+                BasicValue next_val = map_ptr->data.at(key);
+                current_value = std::move(next_val);
             }
-
-            if (!active_function_table->count(real_func_to_call)) {
-                Error::set(22, runtime_current_line);
-                return false;
-            }
-
-            const auto& func_info = active_function_table->at(real_func_to_call);
-            std::vector<BasicValue> args;
-
-            // Argument Parsing Logic (This is now correct)
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
-                Error::set(1, runtime_current_line); return false;
-            }
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                while (true) {
-                    // The ONLY rule is to evaluate the expression. This is the fix.
-                    args.push_back(evaluate_expression());
-                    if (Error::get() != 0) return false;
-
-                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return false; }
-                    pcode++;
+            else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
+                const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
+                if (!json_ptr || !json_ptr->data.is_object() || !json_ptr->data.contains(key)) {
+                    Error::set(3, runtime_current_line); return {};
                 }
+                // This is safe because json_to_basic_value creates a new object
+                current_value = json_to_basic_value(json_ptr->data.at(key));
             }
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                Error::set(18, runtime_current_line); return false;
+            else {
+                Error::set(15, runtime_current_line); return {}; // Type Mismatch
             }
-            else
-                pcode++; // Consume ')'
-
-            if (func_info.arity != -1 && args.size() != func_info.arity) {
-                Error::set(26, runtime_current_line); return false;
-            }
-
-            // --- DELEGATE TO THE NEW HELPER FUNCTION ---
-            return execute_function_for_value(func_info, args);
-#ifdef JDCOM
         }
-#endif
+        else {
+            break; // No more accessors
+        }
     }
-    Error::set(1, runtime_current_line);
-    return false;
+    return current_value;
 }
 
 // Level 5: Handles unary operators like - and NOT

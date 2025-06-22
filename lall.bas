@@ -97,10 +97,13 @@ DO
     REM The structure is: { "choices": [ { "message": { "content": "..." } } ] }
 
     RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
-    A =  RESPONSE_JSON{"choices"}    
-    b = a[0]
-    c = b{"message"}
-    AI_MESSAGE$ = c{"content"}
+
+    'A =  RESPONSE_JSON{"choices"}    
+    'b = a[0]
+    'c = b{"message"}
+    'AI_MESSAGE$ = c{"content"}
+
+    AI_MESSAGE$=RESPONSE_JSON{"choices"}[0]{"message"}{"content"}
     
     PRINT
     PRINT "AI: "; AI_MESSAGE$
