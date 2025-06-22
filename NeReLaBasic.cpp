@@ -859,6 +859,7 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const st
     if_stack.clear();
     func_stack.clear();
     label_addresses.clear();
+    do_loop_stack.clear();
     // We no longer clear the main function table here.
 
     // 2. Pre-scan to find imports and determine if we are a module

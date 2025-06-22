@@ -611,6 +611,7 @@ void Commands::do_let(NeReLaBasic& vm) {
 #endif
     }
 }
+
 void Commands::do_goto(NeReLaBasic& vm) {
     // The label name was stored as a string in the bytecode after the GOTO token.
     std::string label_name = read_string(vm);

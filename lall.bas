@@ -64,7 +64,7 @@ PRINT
 
 DO
     PRINT
-    INPUT "> ", USER_PROMPT$
+    INPUT "> "; USER_PROMPT$
 
     REM Check for exit condition
     IF LCASE$(USER_PROMPT$) = "exit" OR LCASE$(USER_PROMPT$) = "quit" THEN
@@ -103,15 +103,10 @@ DO
     AI_MESSAGE$ = c{"content"}
     
     PRINT
-    PRINT "--- OpenAI's Message ---"
-    PRINT AI_MESSAGE$
-    PRINT "------------------------"
+    PRINT "AI: "; AI_MESSAGE$
 
 LOOP WHILE 1 ' Loop forever until user types exit/quit
 
-GOTO ENDE
-
-
 
 ENDE:
-Print "Thats all folks"
+Print "Bye."

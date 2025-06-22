@@ -1,17 +1,28 @@
-Print "Tick: "; Tick()
-Print "Now: "; Now()
+Print "Do until loop"
+i = 0
+Do until i > 4
+   Print "I: "; I
+   i = i + 1
+loop
 
-DIM deadline AS DATE
-DIM name AS STRING
+Print "Do while loop"
+i = 0
+Do while i < 4
+   Print "I: "; I
+   i = i + 1
+loop
 
-name = "Project Apollo"
-deadline = CVDate("2025-07-01")
+Print "Do loop until"
+i = 0
+Do 
+   Print "I: "; I
+   i = i + 1
+loop until i > 4
 
-PRINT "Deadline for "; name; " is "; deadline
+Print "Do loop while"
+i = 0
+Do 
+   Print "I: "; I
+   i = i + 1
+loop while i < 4
 
-deadline = DATEADD("D", 10, deadline)
-PRINT "Extended deadline is "; deadline
-
-If deadline > Now() then
-   print "Deadline is greater"
-endif
