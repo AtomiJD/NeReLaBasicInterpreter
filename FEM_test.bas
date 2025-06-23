@@ -138,5 +138,5 @@ u = SOLVE(K, F)
 PRINT "Solution (Displacement Vector) {u}:"
 PRINT u
 PRINT ""
-PRINT "Displacement at Node 1 (u1):", u[1], "mm"
-PRINT "Displacement at Node 2 (u2):", u[2], "mm"
+PRINT "Displacement at Node 1 (u1):", u[1]; " mm"
+PRINT "Displacement at Node 2 (u2):", u[2]; " mm"

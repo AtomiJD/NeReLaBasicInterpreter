@@ -1673,29 +1673,63 @@ BasicValue NeReLaBasic::parse_primary() {
     }
     else { Error::set(1, runtime_current_line); return {}; }
     if (Error::get() != 0) return {};
+
+    // --- MAIN LOOP FOR HANDLING ACCESSORS LIKE [..], {..}, .member ---
     while (true) {
         Tokens::ID accessor_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
-        if (accessor_token == Tokens::ID::C_LEFTBRACKET) { // Array index access: [index]
+        if (accessor_token == Tokens::ID::C_LEFTBRACKET) { // Array index access: e.g., A[i, j]
             pcode++; // Consume '['
-            BasicValue index_val = evaluate_expression();
-            if (Error::get() != 0) return {};
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) { 
-                Error::set(16, runtime_current_line, "Missing ']' in array access."); 
-                return {}; 
+
+            std::vector<size_t> indices;
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+                while (true) {
+                    BasicValue index_val = evaluate_expression();
+                    if (Error::get() != 0) return {};
+                    indices.push_back(static_cast<size_t>(to_double(index_val)));
+
+                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                    if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+                    if (separator != Tokens::ID::C_COMMA) {
+                        Error::set(1, runtime_current_line, "Expected ',' or ']' in array index.");
+                        return {};
+                    }
+                    pcode++; // Consume ','
+                }
             }
-            size_t index = static_cast<size_t>(to_double(index_val));
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+                Error::set(16, runtime_current_line, "Missing ']' in array access.");
+                return {};
+            }
 
             if (std::holds_alternative<std::shared_ptr<Array>>(current_value)) {
                 const auto& arr_ptr = std::get<std::shared_ptr<Array>>(current_value);
-                if (!arr_ptr || index >= arr_ptr->data.size()) { Error::set(10, runtime_current_line, "Array index out of bounds."); return {}; }
-                BasicValue next_val = arr_ptr->data[index];
-                current_value = std::move(next_val);
+                if (!arr_ptr) { Error::set(15, runtime_current_line, "Attempt to index a null array."); return {}; }
+
+                try {
+                    size_t flat_index = arr_ptr->get_flat_index(indices);
+                    // The get_flat_index function already checks bounds, but an extra check is safe.
+                    if (flat_index >= arr_ptr->data.size()) {
+                        throw std::out_of_range("Calculated index is out of bounds.");
+                    }
+                    BasicValue next_val = arr_ptr->data[flat_index];
+                    current_value = std::move(next_val);
+                    //current_value = arr_ptr->data[flat_index]; // Update current value with the element
+                }
+                catch (const std::exception&) {
+                    // This catches errors from get_flat_index (dimension mismatch or out of bounds)
+                    Error::set(10, runtime_current_line, "Array index out of bounds or dimension mismatch.");
+                    return {};
+                }
             }
             else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
+                if (indices.size() != 1) {
+                    Error::set(15, runtime_current_line, "Multi-dimensional indexing is not supported for JSON objects."); return {};
+                }
+                size_t index = indices[0];
                 const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
                 if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) { Error::set(10, runtime_current_line, "JSON index out of bounds."); return {}; }
-                current_value = json_to_basic_value(json_ptr->data[index]); // Update current value
+                current_value = json_to_basic_value(json_ptr->data[index]);
             }
             else { Error::set(15, runtime_current_line, "Indexing '[]' can only be used on an Array."); return {}; }
 
@@ -1716,24 +1750,24 @@ BasicValue NeReLaBasic::parse_primary() {
             else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
                 const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
                 if (!json_ptr || !json_ptr->data.is_object() || !json_ptr->data.contains(key)) { Error::set(3, runtime_current_line, "JSON key not found: " + key); return {}; }
-                current_value = json_to_basic_value(json_ptr->data.at(key)); // Update current value
+                current_value = json_to_basic_value(json_ptr->data.at(key));
             }
             else { Error::set(15, runtime_current_line, "Key access '{}' can only be used on a Map or JSON object."); return {}; }
 
         }
-        else if (accessor_token == Tokens::ID::C_DOT) { // *** NEW: Member access: .member ***
+        else if (accessor_token == Tokens::ID::C_DOT) {
             pcode++; // Consume '.'
             Tokens::ID member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
             if (member_token != Tokens::ID::VARIANT && member_token != Tokens::ID::INT && member_token != Tokens::ID::STRVAR) {
                 Error::set(1, runtime_current_line, "Expected member name after '.'"); return {};
             }
-            pcode++; // consume member token type
+            pcode++;
             std::string member_name = to_upper(read_string(*this));
 
             if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
                 const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
                 if (!map_ptr || map_ptr->data.find(member_name) == map_ptr->data.end()) { Error::set(3, runtime_current_line, "Member '" + member_name + "' not found in object."); return {}; }
-                current_value = map_ptr->data.at(member_name); // Update current value
+                current_value = map_ptr->data.at(member_name);
             }
 #ifdef JDCOM
             else if (std::holds_alternative<ComObject>(current_value)) {
