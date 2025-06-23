@@ -435,6 +435,7 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case '}': return Tokens::ID::C_RIGHTBRACE;
     case '.': return Tokens::ID::C_DOT;
     case ':': return Tokens::ID::C_COLON;
+    case '^': return Tokens::ID::C_CARET;
     }
 
     // If we get here, the character is not recognized.
@@ -1812,7 +1813,7 @@ BasicValue NeReLaBasic::parse_factor() {
     BasicValue left = parse_unary();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD) {
+        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD || op == Tokens::ID::C_CARET) {
             pcode++;
             BasicValue right = parse_unary();
 
@@ -1833,9 +1834,15 @@ BasicValue NeReLaBasic::parse_factor() {
                         double left_val = to_double(l->data[i]);
                         double right_val = to_double(r->data[i]);
                         if (op == Tokens::ID::C_ASTR) result_ptr->data.push_back(left_val * right_val);
+                        else if (op == Tokens::ID::C_CARET) result_ptr->data.push_back(pow(left_val,right_val));
                         else if (op == Tokens::ID::C_SLASH) {
                             if (right_val == 0.0) { Error::set(2, runtime_current_line); return false; }
                             result_ptr->data.push_back(left_val / right_val);
+                        } else if (op == Tokens::ID::MOD) {
+                            long long left_val = static_cast<long long>(to_double(l->data[i]));
+                            long long right_val = static_cast<long long>(to_double(r->data[i]));
+                            if (right_val == 0) { Error::set(2, runtime_current_line); return false; }
+                            result_ptr->data.push_back(static_cast<double>(left_val % right_val));
                         }
                     }
                     return result_ptr;
@@ -1849,9 +1856,15 @@ BasicValue NeReLaBasic::parse_factor() {
                     result_ptr->data.reserve(l->data.size());
                     for (const auto& elem : l->data) {
                         if (op == Tokens::ID::C_ASTR) result_ptr->data.push_back(to_double(elem) * scalar);
+                        else if (op == Tokens::ID::C_CARET) result_ptr->data.push_back(pow(to_double(elem),scalar));
                         else if (op == Tokens::ID::C_SLASH) {
                             if (scalar == 0.0) { Error::set(2, runtime_current_line); return false; }
                             result_ptr->data.push_back(to_double(elem) / scalar);
+                        } else if (op == Tokens::ID::MOD) {
+                            long long right_scalar = static_cast<long long>(scalar);
+                            long long left_val = static_cast<long long>(to_double(elem));
+                            if (right_scalar == 0) { Error::set(2, runtime_current_line); return false; }
+                            result_ptr->data.push_back(static_cast<double>(left_val % right_scalar));
                         }
                     }
                     return result_ptr;
@@ -1865,9 +1878,15 @@ BasicValue NeReLaBasic::parse_factor() {
                     result_ptr->data.reserve(r->data.size());
                     for (const auto& elem : r->data) {
                         if (op == Tokens::ID::C_ASTR) result_ptr->data.push_back(scalar * to_double(elem));
+                        else if (op == Tokens::ID::C_CARET) result_ptr->data.push_back(pow(scalar, to_double(elem)));
                         else if (op == Tokens::ID::C_SLASH) {
                             if (to_double(elem) == 0.0) { Error::set(2, runtime_current_line); return false; }
                             result_ptr->data.push_back(scalar / to_double(elem));
+                        } else if (op == Tokens::ID::MOD) {
+                            long long left_scalar = static_cast<long long>(scalar);
+                            long long right_val = static_cast<long long>(to_double(elem));
+                            if (right_val == 0) { Error::set(2, runtime_current_line); return false; }
+                            result_ptr->data.push_back(static_cast<double>(left_scalar % right_val));
                         }
                     }
                     return result_ptr;

@@ -105,8 +105,8 @@ void Error::print() {
             message = errorMessages[current_error_code];
         }
         // If not, check if a custom message was provided.
-        else if (!custom_error_message.empty()) {
-            message = custom_error_message;
+        if (!custom_error_message.empty()) {
+            message = message + ", " + custom_error_message;
         }
         // Otherwise, use a generic fallback.
         else {

@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include <cstdlib> 
 
+
 #ifdef HTTP
 #include "NetworkManager.hpp"
 #endif
@@ -1181,6 +1182,85 @@ BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result_ptr;
 }
 
+// MVLET(matrix, dimension, index, vector) -> matrix
+// Replaces a row or column in a matrix with a vector, returning a new matrix.
+BasicValue builtin_mvlet(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 4) {
+        Error::set(8, vm.runtime_current_line, "MVLET requires 4 arguments: matrix, dimension, index, vector");
+        return {};
+    }
+
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) ||
+        !std::holds_alternative<std::shared_ptr<Array>>(args[3])) {
+        Error::set(15, vm.runtime_current_line, "First and fourth arguments to MVLET must be arrays.");
+        return {};
+    }
+
+    const auto& matrix_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    int dimension = static_cast<int>(to_double(args[1]));
+    int index = static_cast<int>(to_double(args[2]));
+    const auto& vector_ptr = std::get<std::shared_ptr<Array>>(args[3]);
+
+    // 2. --- Further Validation ---
+    if (!matrix_ptr || matrix_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line, "First argument to MVLET must be a 2D matrix.");
+        return {};
+    }
+    if (!vector_ptr || vector_ptr->shape.size() != 1) {
+        Error::set(15, vm.runtime_current_line, "Fourth argument to MVLET must be a 1D vector.");
+        return {};
+    }
+
+    size_t rows = matrix_ptr->shape[0];
+    size_t cols = matrix_ptr->shape[1];
+
+    if (dimension != 0 && dimension != 1) {
+        Error::set(1, vm.runtime_current_line, "Dimension for MVLET must be 0 (row) or 1 (column).");
+        return {};
+    }
+
+    // 3. --- Create a copy of the matrix to modify ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = matrix_ptr->shape;
+    result_ptr->data = matrix_ptr->data; // Make a full copy of the data
+
+    // 4. --- Perform the replacement logic ---
+    if (dimension == 0) { // Replace a row
+        if (index < 0 || (size_t)index >= rows) {
+            Error::set(10, vm.runtime_current_line, "Row index out of bounds for MVLET.");
+            return {};
+        }
+        if (vector_ptr->data.size() != cols) {
+            Error::set(15, vm.runtime_current_line, "Vector length must match the number of columns to replace a row.");
+            return {};
+        }
+
+        size_t start_pos = (size_t)index * cols;
+        for (size_t c = 0; c < cols; ++c) {
+            result_ptr->data[start_pos + c] = vector_ptr->data[c];
+        }
+    }
+    else { // dimension == 1, Replace a column
+        if (index < 0 || (size_t)index >= cols) {
+            Error::set(10, vm.runtime_current_line, "Column index out of bounds for MVLET.");
+            return {};
+        }
+        if (vector_ptr->data.size() != rows) {
+            Error::set(15, vm.runtime_current_line, "Vector length must match the number of rows to replace a column.");
+            return {};
+        }
+
+        for (size_t r = 0; r < rows; ++r) {
+            result_ptr->data[r * cols + (size_t)index] = vector_ptr->data[r];
+        }
+    }
+
+    // 5. --- Return the new matrix ---
+    return result_ptr;
+}
+
+
 // TRANSPOSE(matrix) -> matrix
 // Transposes a 2D matrix.
 BasicValue builtin_transpose(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1292,6 +1372,7 @@ BasicValue builtin_outer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
                 if (op == "+") result_ptr->data.push_back(num_a + num_b);
                 else if (op == "-") result_ptr->data.push_back(num_a - num_b);
                 else if (op == "*") result_ptr->data.push_back(num_a * num_b);
+                else if (op == "^") result_ptr->data.push_back(pow(num_a, num_b));
                 else if (op == "/") {
                     if (num_b == 0.0) { Error::set(2, vm.runtime_current_line); return {}; }
                     result_ptr->data.push_back(num_a / num_b);
@@ -2510,6 +2591,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("DROP", 2, builtin_drop);
     register_func("GRADE", 1, builtin_grade);
     register_func("SLICE", 3, builtin_slice);
+    register_func("MVLET", 4, builtin_mvlet);
     register_func("DIFF", 2, builtin_diff);
     register_func("APPEND", 2, builtin_append);
 

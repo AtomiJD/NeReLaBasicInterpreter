@@ -92,6 +92,7 @@ namespace Tokens {
         MAP_ACCESS = 0x54,
         ONERRORCALL = 0x55,
         C_DOT = 0x56,
+        C_CARET = 0x57,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,
