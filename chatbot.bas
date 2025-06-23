@@ -76,6 +76,7 @@ DO
 
     ON ERROR CALL HandleJsonError
     RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+    print RESPONSE_JSON 
     AI_MESSAGE$ = RESPONSE_JSON{"choices"}[0]{"message"}{"content"}
     
     PRINT

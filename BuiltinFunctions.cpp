@@ -232,6 +232,120 @@ std::string wildcard_to_regex(const std::string& wildcard) {
     return regex_str;
 }
 
+namespace {
+
+    // Structure to hold Gauss-Legendre quadrature points and weights
+    struct GaussRule {
+        std::vector<double> points;
+        std::vector<double> weights;
+    };
+
+    // Pre-calculated Gauss-Legendre points and weights for the interval [-1, 1]
+    const std::map<int, GaussRule> GAUSS_RULES = {
+        {1, {{0.0}, {2.0}}},
+        {2, {{-0.5773502691896257, 0.5773502691896257}, {1.0, 1.0}}},
+        {3, {{-0.7745966692414834, 0.0, 0.7745966692414834}, {0.5555555555555556, 0.8888888888888888, 0.5555555555555556}}},
+        {4, {{-0.8611363115940526, -0.3399810435848563, 0.3399810435848563, 0.8611363115940526}, {0.3478548451374538, 0.6521451548625461, 0.6521451548625461, 0.3478548451374538}}},
+        {5, {{-0.9061798459386640, -0.5384693101056831, 0.0, 0.5384693101056831, 0.9061798459386640}, {0.2369268850561891, 0.4786286704993665, 0.5688888888888889, 0.4786286704993665, 0.2369268850561891}}}
+    };
+
+    // Solves the linear system Ax = b for x using LU Decomposition with partial pivoting.
+    // - A is the n x n coefficient matrix, passed as a flat vector.
+    // - b is the n x 1 known vector.
+    // - n is the dimension of the system.
+    // Returns the solution vector x, or an empty vector if the matrix is singular.
+    // NOTE: This implementation takes A by value because it modifies it in-place.
+    std::vector<double> lu_solve(std::vector<double> A, std::vector<double> b, int n) {
+        std::vector<int> pivot_map(n);
+
+        // Initialize pivot map
+        for (int i = 0; i < n; ++i) {
+            pivot_map[i] = i;
+        }
+
+        // --- LU Decomposition with Partial Pivoting ---
+        for (int i = 0; i < n; ++i) {
+            // Find the pivot row
+            int max_row = i;
+            for (int j = i + 1; j < n; ++j) {
+                if (std::abs(A[j * n + i]) > std::abs(A[max_row * n + i])) {
+                    max_row = j;
+                }
+            }
+
+            // Swap rows in matrix A if necessary
+            if (max_row != i) {
+                for (int k = 0; k < n; ++k) {
+                    std::swap(A[i * n + k], A[max_row * n + k]);
+                }
+                // Record the swap in the pivot map
+                std::swap(pivot_map[i], pivot_map[max_row]);
+            }
+
+            // Check for singularity (or near-singularity)
+            if (std::abs(A[i * n + i]) < 1e-12) {
+                return {}; // Return empty vector to indicate a singular matrix
+            }
+
+            // Perform elimination for the rows below the pivot
+            for (int j = i + 1; j < n; ++j) {
+                A[j * n + i] /= A[i * n + i]; // Calculate the multiplier
+                for (int k = i + 1; k < n; ++k) {
+                    A[j * n + k] -= A[j * n + i] * A[i * n + k];
+                }
+            }
+        }
+
+        // --- Apply the pivot permutation to the vector b ---
+        std::vector<double> x(n);
+        for (int i = 0; i < n; ++i) {
+            x[i] = b[pivot_map[i]];
+        }
+
+        // --- Forward Substitution (solves Ly = P*b) ---
+        for (int i = 1; i < n; ++i) {
+            for (int j = 0; j < i; ++j) {
+                x[i] -= A[i * n + j] * x[j];
+            }
+        }
+
+        // --- Backward Substitution (solves Ux = y) ---
+        for (int i = n - 1; i >= 0; --i) {
+            for (int j = i + 1; j < n; ++j) {
+                x[i] -= A[i * n + j] * x[j];
+            }
+            x[i] /= A[i * n + i];
+        }
+
+        return x; // Return the solution vector
+    }
+
+    // Computes the inverse of matrix A using the LU decomposition solver.
+    std::vector<double> lu_invert(const std::vector<double>& A, int n) {
+        std::vector<double> inverse(n * n);
+
+        // Solve the system A * X = I, where I is the identity matrix.
+        // We do this by solving for each column of X (the inverse) one at a time.
+        for (int j = 0; j < n; ++j) {
+            std::vector<double> b(n, 0.0);
+            b[j] = 1.0; // The j-th column of the identity matrix
+
+            // Solve A * x_j = b for x_j (the j-th column of the inverse)
+            std::vector<double> x_j = lu_solve(A, b, n);
+
+            if (x_j.empty()) {
+                return {}; // Matrix is singular, cannot invert.
+            }
+
+            // Place the solution column into the correct place in the final inverse matrix.
+            for (int i = 0; i < n; ++i) {
+                inverse[i * n + j] = x_j[i];
+            }
+        }
+        return inverse;
+    }
+} 
+
 // --- JSON Functionality ---
 
 // Forward declaration for recursive conversion
@@ -1145,49 +1259,260 @@ BasicValue builtin_matmul(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return result_ptr;
 }
 
-// OUTER(arrayA, arrayB, operator_string) -> array
-// Creates a combination table by applying an operator to all pairs of elements.
+// OUTER(arrayA, arrayB, operator_string_or_funcref) -> array
 BasicValue builtin_outer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return {}; }
-    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
-        Error::set(15, vm.runtime_current_line); return {};
+    // 1. Argument validation
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "OUTER requires 3 arguments: arrayA, arrayB, operator");
+        return {};
     }
-    if (!std::holds_alternative<std::string>(args[2])) {
-        Error::set(15, vm.runtime_current_line); return {};
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "First two arguments to OUTER must be arrays.");
+        return {};
+    }
+    const auto& a_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& b_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!a_ptr || !b_ptr) return {};
+
+    // 2. Prepare the result array
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = a_ptr->shape;
+    result_ptr->shape.insert(result_ptr->shape.end(), b_ptr->shape.begin(), b_ptr->shape.end());
+    result_ptr->data.reserve(a_ptr->data.size() * b_ptr->data.size());
+
+    const BasicValue& op_arg = args[2];
+
+    // 3. Check if the operator is a string
+    if (std::holds_alternative<std::string>(op_arg)) {
+        const std::string op = to_upper(std::get<std::string>(op_arg));
+        for (const auto& val_a : a_ptr->data) {
+            for (const auto& val_b : b_ptr->data) {
+                double num_a = to_double(val_a);
+                double num_b = to_double(val_b);
+                if (op == "+") result_ptr->data.push_back(num_a + num_b);
+                else if (op == "-") result_ptr->data.push_back(num_a - num_b);
+                else if (op == "*") result_ptr->data.push_back(num_a * num_b);
+                else if (op == "/") {
+                    if (num_b == 0.0) { Error::set(2, vm.runtime_current_line); return {}; }
+                    result_ptr->data.push_back(num_a / num_b);
+                }
+                else if (op == "=") result_ptr->data.push_back(num_a == num_b);
+                else if (op == ">") result_ptr->data.push_back(num_a > num_b);
+                else if (op == "<") result_ptr->data.push_back(num_a < num_b);
+                else { Error::set(1, vm.runtime_current_line, "Invalid operator string: " + op); return {}; }
+            }
+        }
+    }
+    // 4. Check if the operator is a function reference
+    else if (std::holds_alternative<FunctionRef>(op_arg)) {
+        const std::string func_name = to_upper(std::get<FunctionRef>(op_arg).name);
+        if (!vm.active_function_table->count(func_name)) {
+            Error::set(22, vm.runtime_current_line, "Operator function '" + func_name + "' not found.");
+            return {};
+        }
+        const auto& func_info = vm.active_function_table->at(func_name);
+        if (func_info.arity != 2) {
+            Error::set(26, vm.runtime_current_line, "Operator function '" + func_name + "' must accept exactly two arguments.");
+            return {};
+        }
+
+        for (const auto& val_a : a_ptr->data) {
+            for (const auto& val_b : b_ptr->data) {
+                std::vector<BasicValue> func_args = { val_a, val_b };
+                BasicValue result = vm.execute_function_for_value(func_info, func_args);
+                if (Error::get() != 0) return {}; // Propagate error from user function
+                result_ptr->data.push_back(result);
+            }
+        }
+    }
+    else {
+        Error::set(15, vm.runtime_current_line, "Third argument to OUTER must be an operator string or a function reference.");
+        return {};
+    }
+
+    return result_ptr;
+}
+
+// INTEGRATE(function@, limits, rule) 
+// INTEGRATE function This is the core logic. It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
+BasicValue builtin_integrate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "INTEGRATE requires 3 arguments: function_ref, domain_array, order");
+        return 0.0;
+    }
+    if (!std::holds_alternative<FunctionRef>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to INTEGRATE must be a function reference (e.g., @MyFunc).");
+        return 0.0;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to INTEGRATE must be a 1D array with 2 elements for the domain.");
+        return 0.0;
+    }
+
+    // 2. --- Argument Parsing ---
+    const std::string func_name = to_upper(std::get<FunctionRef>(args[0]).name);
+    const auto& domain_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const int order = static_cast<int>(to_double(args[2]));
+
+    // 3. --- Further Validation ---
+    if (!vm.active_function_table->count(func_name)) {
+        Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for integration.");
+        return 0.0;
+    }
+    const auto& func_info = vm.active_function_table->at(func_name);
+    if (func_info.arity != 1) {
+        Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' must accept exactly one argument.");
+        return 0.0;
+    }
+    if (!domain_ptr || domain_ptr->data.size() != 2) {
+        Error::set(15, vm.runtime_current_line, "Domain array for INTEGRATE must have exactly two elements [a, b].");
+        return 0.0;
+    }
+    if (GAUSS_RULES.find(order) == GAUSS_RULES.end()) {
+        Error::set(1, vm.runtime_current_line, "Unsupported integration order: " + std::to_string(order) + ". Supported orders are 1-5.");
+        return 0.0;
+    }
+
+    // 4. --- Integration Logic ---
+    const double a = to_double(domain_ptr->data[0]); // Lower limit
+    const double b = to_double(domain_ptr->data[1]); // Upper limit
+    const GaussRule& rule = GAUSS_RULES.at(order);
+
+    double integral_sum = 0.0;
+
+    // The integral of f(x) from a to b is transformed to an integral from -1 to 1.
+    // The change of variable is: x = (a+b)/2 + (b-a)/2 * xi
+    // The differential becomes: dx = (b-a)/2 * dxi
+    // The term (b-a)/2 is the Jacobian of the transformation.
+    const double jacobian = (b - a) / 2.0;
+
+    for (size_t i = 0; i < rule.points.size(); ++i) {
+        const double weight = rule.weights[i];
+        const double gauss_point_xi = rule.points[i]; // This is the point in [-1, 1]
+
+        // Map the Gauss point from the natural coordinate 'xi' to the physical coordinate 'x'
+        const double physical_point_x = 0.5 * (a + b) + 0.5 * (b - a) * gauss_point_xi;
+
+        // Prepare argument to pass to the user's BASIC function
+        std::vector<BasicValue> args_to_pass = { physical_point_x };
+
+        // Execute the user's BASIC function to get the value of the integrand f(x)
+        BasicValue f_of_x_val = vm.execute_function_for_value(func_info, args_to_pass);
+
+        // Check for errors during function execution (e.g., division by zero inside the user func)
+        if (Error::get() != 0) {
+            return 0.0;
+        }
+
+        integral_sum += weight * to_double(f_of_x_val);
+    }
+
+    return integral_sum * jacobian;
+}
+
+// SOLVE(matrix A, vextor b) -> vector_x
+// Solves the linear system Ax = b for the unknown vector x.
+BasicValue builtin_solve(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SOLVE requires 2 arguments: matrix_A, vector_b");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Both arguments to SOLVE must be arrays.");
+        return {};
+    }
+
+    // 2. --- Argument Parsing ---
+    const auto& a_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& b_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+
+    // 3. --- Further Validation ---
+    if (!a_ptr || a_ptr->shape.size() != 2 || a_ptr->shape[0] != a_ptr->shape[1]) {
+        Error::set(15, vm.runtime_current_line, "First argument to SOLVE must be a square matrix.");
+        return {};
+    }
+    const int n = a_ptr->shape[0];
+    if (!b_ptr || b_ptr->shape.size() != 1 || b_ptr->data.size() != n) {
+        Error::set(15, vm.runtime_current_line, "Second argument must be a vector with the same dimension as the matrix.");
+        return {};
+    }
+
+    // 4. --- Data Conversion for Solver ---
+    std::vector<double> a_data;
+    a_data.reserve(n * n);
+    for (const auto& val : a_ptr->data) {
+        a_data.push_back(to_double(val));
+    }
+
+    std::vector<double> b_data;
+    b_data.reserve(n);
+    for (const auto& val : b_ptr->data) {
+        b_data.push_back(to_double(val));
+    }
+
+    // 5. --- Call the C++ Solver ---
+    std::vector<double> solution_data = lu_solve(a_data, b_data, n);
+
+    if (solution_data.empty()) {
+        Error::set(1, vm.runtime_current_line, "Matrix is singular; system cannot be solved.");
+        return {};
+    }
+
+    // 6. --- Convert Result back to a BASIC Array ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = { (size_t)n };
+    result_ptr->data.reserve(n);
+    for (double val : solution_data) {
+        result_ptr->data.push_back(val);
+    }
+
+    return result_ptr;
+}
+
+// INVERT(matrix) -> matrix
+// Computes the inverse of a square matrix.
+BasicValue builtin_invert(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "INVERT requires 1 argument: a square matrix");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to INVERT must be an array.");
+        return {};
     }
 
     const auto& a_ptr = std::get<std::shared_ptr<Array>>(args[0]);
-    const auto& b_ptr = std::get<std::shared_ptr<Array>>(args[1]);
-    const std::string op = std::get<std::string>(args[2]);
+    if (!a_ptr || a_ptr->shape.size() != 2 || a_ptr->shape[0] != a_ptr->shape[1]) {
+        Error::set(15, vm.runtime_current_line, "Argument to INVERT must be a square matrix.");
+        return {};
+    }
+    const int n = a_ptr->shape[0];
 
-    if (!a_ptr || !b_ptr) return {};
+    std::vector<double> a_data;
+    a_data.reserve(n * n);
+    for (const auto& val : a_ptr->data) {
+        a_data.push_back(to_double(val));
+    }
+
+    std::vector<double> inverse_data = lu_invert(a_data, n);
+
+    if (inverse_data.empty()) {
+        Error::set(1, vm.runtime_current_line, "Matrix is singular and cannot be inverted.");
+        return {};
+    }
 
     auto result_ptr = std::make_shared<Array>();
-    result_ptr->shape = a_ptr->shape; // Start with shape of A
-    result_ptr->shape.insert(result_ptr->shape.end(), b_ptr->shape.begin(), b_ptr->shape.end()); // Append shape of B
-    result_ptr->data.reserve(a_ptr->data.size() * b_ptr->data.size());
-
-    for (const auto& val_a : a_ptr->data) {
-        for (const auto& val_b : b_ptr->data) {
-            double num_a = to_double(val_a);
-            double num_b = to_double(val_b);
-
-            if (op == "+") result_ptr->data.push_back(num_a + num_b);
-            else if (op == "-") result_ptr->data.push_back(num_a - num_b);
-            else if (op == "*") result_ptr->data.push_back(num_a * num_b);
-            else if (op == "/") {
-                if (num_b == 0.0) { Error::set(2, vm.runtime_current_line); return {}; }
-                result_ptr->data.push_back(num_a / num_b);
-            }
-            else if (op == "=") result_ptr->data.push_back(num_a == num_b);
-            else if (op == ">") result_ptr->data.push_back(num_a > num_b);
-            else if (op == "<") result_ptr->data.push_back(num_a < num_b);
-            // Add other operators as needed...
-            else { Error::set(1, vm.runtime_current_line); return {}; } // Invalid operator
-        }
+    result_ptr->shape = { (size_t)n, (size_t)n };
+    result_ptr->data.reserve(n * n);
+    for (double val : inverse_data) {
+        result_ptr->data.push_back(val);
     }
+
     return result_ptr;
 }
+
 
 // --- Slicing and Sorting Functions ---
 
@@ -2178,13 +2503,15 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("ALL", 1, builtin_all);
     register_func("MATMUL", 2, builtin_matmul);
     register_func("OUTER", 3, builtin_outer);
+    register_func("INTEGRATE", 3, builtin_integrate);
+    register_func("SOLVE", 2, builtin_solve);
+    register_func("INVERT", 1, builtin_invert);
     register_func("TAKE", 2, builtin_take);
     register_func("DROP", 2, builtin_drop);
     register_func("GRADE", 1, builtin_grade);
     register_func("SLICE", 3, builtin_slice);
     register_func("DIFF", 2, builtin_diff);
     register_func("APPEND", 2, builtin_append);
-
 
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);

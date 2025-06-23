@@ -1675,41 +1675,77 @@ BasicValue NeReLaBasic::parse_primary() {
     if (Error::get() != 0) return {};
     while (true) {
         Tokens::ID accessor_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (accessor_token == Tokens::ID::C_LEFTBRACKET) {
-            pcode++; BasicValue index_val = evaluate_expression(); if (Error::get() != 0) return {};
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) { Error::set(16, runtime_current_line); return {}; }
+
+        if (accessor_token == Tokens::ID::C_LEFTBRACKET) { // Array index access: [index]
+            pcode++; // Consume '['
+            BasicValue index_val = evaluate_expression();
+            if (Error::get() != 0) return {};
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) { Error::set(16, runtime_current_line, "Missing ']' in array access."); return {}; }
             size_t index = static_cast<size_t>(to_double(index_val));
+
             if (std::holds_alternative<std::shared_ptr<Array>>(current_value)) {
                 const auto& arr_ptr = std::get<std::shared_ptr<Array>>(current_value);
-                if (!arr_ptr || index >= arr_ptr->data.size()) { Error::set(10, runtime_current_line); return {}; }
+                if (!arr_ptr || index >= arr_ptr->data.size()) { Error::set(10, runtime_current_line, "Array index out of bounds."); return {}; }
                 BasicValue next_val = arr_ptr->data[index];
                 current_value = std::move(next_val);
             }
             else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
                 const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
-                if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) { Error::set(10, runtime_current_line); return {}; }
-                current_value = json_to_basic_value(json_ptr->data[index]);
+                if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) { Error::set(10, runtime_current_line, "JSON index out of bounds."); return {}; }
+                current_value = json_to_basic_value(json_ptr->data[index]); // Update current value
             }
-            else { Error::set(15, runtime_current_line); return {}; }
+            else { Error::set(15, runtime_current_line, "Indexing '[]' can only be used on an Array."); return {}; }
+
         }
-        else if (accessor_token == Tokens::ID::C_LEFTBRACE) {
-            pcode++; BasicValue key_val = evaluate_expression(); if (Error::get() != 0) return {};
+        else if (accessor_token == Tokens::ID::C_LEFTBRACE) { // Map key access: {key}
+            pcode++; // Consume '{'
+            BasicValue key_val = evaluate_expression();
+            if (Error::get() != 0) return {};
             std::string key = to_string(key_val);
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACE) { Error::set(17, runtime_current_line); return {}; }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACE) { Error::set(17, runtime_current_line, "Missing '}' in map access."); return {}; }
+
             if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
                 const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
-                if (!map_ptr || map_ptr->data.find(key) == map_ptr->data.end()) { Error::set(3, runtime_current_line); return {}; }
+                if (!map_ptr || map_ptr->data.find(key) == map_ptr->data.end()) { Error::set(3, runtime_current_line, "Map key not found: " + key); return {}; }
                 BasicValue next_val = map_ptr->data.at(key);
                 current_value = std::move(next_val);
             }
             else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
                 const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
-                if (!json_ptr || !json_ptr->data.is_object() || !json_ptr->data.contains(key)) { Error::set(3, runtime_current_line); return {}; }
-                current_value = json_to_basic_value(json_ptr->data.at(key));
+                if (!json_ptr || !json_ptr->data.is_object() || !json_ptr->data.contains(key)) { Error::set(3, runtime_current_line, "JSON key not found: " + key); return {}; }
+                current_value = json_to_basic_value(json_ptr->data.at(key)); // Update current value
             }
-            else { Error::set(15, runtime_current_line); return {}; }
+            else { Error::set(15, runtime_current_line, "Key access '{}' can only be used on a Map or JSON object."); return {}; }
+
         }
-        else { break; }
+        else if (accessor_token == Tokens::ID::C_DOT) { // *** NEW: Member access: .member ***
+            pcode++; // Consume '.'
+            Tokens::ID member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+            if (member_token != Tokens::ID::VARIANT && member_token != Tokens::ID::INT && member_token != Tokens::ID::STRVAR) {
+                Error::set(1, runtime_current_line, "Expected member name after '.'"); return {};
+            }
+            pcode++; // consume member token type
+            std::string member_name = to_upper(read_string(*this));
+
+            if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
+                const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
+                if (!map_ptr || map_ptr->data.find(member_name) == map_ptr->data.end()) { Error::set(3, runtime_current_line, "Member '" + member_name + "' not found in object."); return {}; }
+                current_value = map_ptr->data.at(member_name); // Update current value
+            }
+#ifdef JDCOM
+            else if (std::holds_alternative<ComObject>(current_value)) {
+                IDispatchPtr pDisp = std::get<ComObject>(current_value).ptr;
+                _variant_t result_vt;
+                HRESULT hr = invoke_com_method(pDisp, member_name, {}, result_vt, DISPATCH_PROPERTYGET);
+                if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property '" + member_name + "' not found or failed to get."); return {}; }
+                current_value = variant_t_to_basic_value(result_vt, *this);
+            }
+#endif
+            else { Error::set(15, runtime_current_line, "Member access '.' can only be used on an object."); return {}; }
+        }
+        else {
+            break; // No more accessors, break the loop
+        }
     }
     return current_value;
 }
