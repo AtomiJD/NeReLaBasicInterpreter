@@ -1511,10 +1511,10 @@ BasicValue NeReLaBasic::parse_array_literal() {
             pcode++;
         }
     }
-    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
-        Error::set(16, runtime_current_line); return false;
-    }
-    else
+    //if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+    //    Error::set(16, runtime_current_line); return false;
+    //}
+    //else
         pcode++; // Consume ']'
 
     // --- Now, construct the Array object from the parsed elements ---
@@ -1680,7 +1680,10 @@ BasicValue NeReLaBasic::parse_primary() {
             pcode++; // Consume '['
             BasicValue index_val = evaluate_expression();
             if (Error::get() != 0) return {};
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) { Error::set(16, runtime_current_line, "Missing ']' in array access."); return {}; }
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) { 
+                Error::set(16, runtime_current_line, "Missing ']' in array access."); 
+                return {}; 
+            }
             size_t index = static_cast<size_t>(to_double(index_val));
 
             if (std::holds_alternative<std::shared_ptr<Array>>(current_value)) {
