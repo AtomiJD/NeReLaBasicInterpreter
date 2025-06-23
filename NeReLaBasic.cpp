@@ -82,7 +82,8 @@ void trim(std::string& s) {
         s = s.substr(start, end - start + 1);
 }
 
-std::pair<BasicValue, std::string> NeReLaBasic::resolve_com_chain(const std::string& chain_string) {
+// --- MODIFIED: The chain resolver now handles both UDTs (Maps) and COM Objects ---
+std::pair<BasicValue, std::string> NeReLaBasic::resolve_dot_chain(const std::string& chain_string) {
     std::stringstream ss(chain_string);
     std::string segment;
     std::vector<std::string> parts;
@@ -95,48 +96,49 @@ std::pair<BasicValue, std::string> NeReLaBasic::resolve_com_chain(const std::str
         return {};
     }
 
-    // Get the base variable (e.g., "objXL").
+    // Get the base variable (e.g., "PLAYER").
     BasicValue current_object = get_variable(*this, to_upper(parts[0]));
 
     // Navigate the chain up to the second-to-last part.
-    // For a chain like "A.B.C", this loop will process "B".
     for (size_t i = 1; i < parts.size() - 1; ++i) {
-        if (!std::holds_alternative<ComObject>(current_object)) {
-            Error::set(15, runtime_current_line); // Not a COM object in the middle of a chain.
-            return {};
-        }
-        IDispatchPtr pDisp = std::get<ComObject>(current_object).ptr;
-        if (!pDisp) {
-            Error::set(1, runtime_current_line); // Uninitialized object.
-            return {};
-        }
+        std::string& part = parts[i];
 
-        _variant_t result_vt;
-        // Assume intermediate parts are properties that return objects.
-        HRESULT hr = invoke_com_method(pDisp, parts[i], {}, result_vt, DISPATCH_PROPERTYGET);
-
-        if (FAILED(hr)) {
-            // Let's also try it as a zero-argument method that returns an object (e.g., Workbooks.Add)
-            hr = invoke_com_method(pDisp, parts[i], {}, result_vt, DISPATCH_METHOD);
-            if (FAILED(hr)) {
-                Error::set(12, runtime_current_line); // General COM error.
-                return {};
+        // Check if we have a UDT (Map) or a COM object
+        if (std::holds_alternative<std::shared_ptr<Map>>(current_object)) {
+            auto& map_ptr = std::get<std::shared_ptr<Map>>(current_object);
+            if (map_ptr && map_ptr->data.count(part)) {
+                current_object = map_ptr->data.at(part);
+            }
+            else {
+                Error::set(3, runtime_current_line, "Member not found: " + part); return {};
             }
         }
-        current_object = variant_t_to_basic_value(result_vt, *this);
+#ifdef JDCOM
+        else if (std::holds_alternative<ComObject>(current_object)) {
+            IDispatchPtr pDisp = std::get<ComObject>(current_object).ptr;
+            if (!pDisp) { Error::set(1, runtime_current_line, "Uninitialized COM object."); return {}; }
+            _variant_t result_vt;
+            HRESULT hr = invoke_com_method(pDisp, part, {}, result_vt, DISPATCH_PROPERTYGET);
+            if (FAILED(hr)) {
+                hr = invoke_com_method(pDisp, part, {}, result_vt, DISPATCH_METHOD);
+                if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM member not found: " + part); return {}; }
+            }
+            current_object = variant_t_to_basic_value(result_vt, *this);
+        }
+#endif
+        else {
+            Error::set(15, runtime_current_line, "Dot notation can only be used on objects and user-defined types.");
+            return {};
+        }
     }
 
-    // Return the final object and the final member name.
     if (parts.size() > 1) {
-        // e.g., for "A.B.C", returns { object B, "C" }
         return { current_object, parts.back() };
     }
     else {
-        // e.g., for "A", returns { object A, "" }
         return { current_object, "" };
     }
 }
-
 
 // Constructor: Initializes the interpreter state
 NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memory
@@ -431,6 +433,7 @@ Tokens::ID NeReLaBasic::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case ']': return Tokens::ID::C_RIGHTBRACKET;
     case '{': return Tokens::ID::C_LEFTBRACE;
     case '}': return Tokens::ID::C_RIGHTBRACE;
+    case '.': return Tokens::ID::C_DOT;
     case ':': return Tokens::ID::C_COLON;
     }
 
@@ -897,6 +900,57 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
     return 0; // Success
 }
 
+void NeReLaBasic::pre_scan_and_parse_types() {
+    std::stringstream source_stream(this->source_code);
+    std::string line;
+    bool in_type_block = false;
+    TypeInfo current_type_info;
+
+    while (std::getline(source_stream, line)) {
+        std::stringstream line_stream(line);
+        std::string first_word;
+        line_stream >> first_word;
+        first_word = StringUtils::to_upper(first_word);
+
+        if (in_type_block) {
+            if (first_word == "ENDTYPE") {
+                in_type_block = false;
+                this->user_defined_types[current_type_info.name] = current_type_info;
+            }
+            else if (!first_word.empty()) {
+                MemberInfo member;
+                member.name = first_word;
+
+                std::string as_word, type_word;
+                line_stream >> as_word >> type_word;
+
+                if (StringUtils::to_upper(as_word) == "AS") {
+                    type_word = StringUtils::to_upper(type_word);
+                    if (type_word == "STRING") member.type_id = DataType::STRING;
+                    else if (type_word == "INTEGER") member.type_id = DataType::INTEGER;
+                    else if (type_word == "DOUBLE") member.type_id = DataType::DOUBLE;
+                    else if (type_word == "BOOLEAN") member.type_id = DataType::BOOL;
+                    else if (type_word == "DATE") member.type_id = DataType::DATETIME;
+                    else if (type_word == "MAP") member.type_id = DataType::MAP;
+                    else if (type_word == "ARRAY") {
+                        continue; // Silently ignore array members for now
+                    }
+                }
+                current_type_info.members[member.name] = member;
+            }
+        }
+        else {
+            if (first_word == "TYPE") {
+                in_type_block = true;
+                std::string type_name;
+                line_stream >> type_name;
+                current_type_info = TypeInfo{};
+                current_type_info.name = StringUtils::to_upper(type_name);
+            }
+        }
+    }
+}
+
 // --- HELPER FUNCTION TO COMPILE A MODULE FROM SOURCE ---
 bool NeReLaBasic::compile_module(const std::string& module_name, const std::string& module_source_code) {
     if (this->compiled_modules.count(module_name)) {
@@ -932,7 +986,12 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const st
     func_stack.clear();
     label_addresses.clear();
     do_loop_stack.clear();
-    // We no longer clear the main function table here.
+    
+    this->source_code = source; // Store source for pre-scanning
+
+    // NEW: Pre-scan for TYPE definitions
+    this->user_defined_types.clear();
+    pre_scan_and_parse_types();
 
     // 2. Pre-scan to find imports and determine if we are a module
     is_compiling_module = false;
@@ -1008,9 +1067,30 @@ uint8_t NeReLaBasic::tokenize_program(std::vector<uint8_t>& out_p_code, const st
     // 7. Main compilation loop
     std::stringstream source_stream(source);
     current_source_line = 1;
+    bool skipping_type_block = false;
+
     while (std::getline(source_stream, line)) {
+        std::stringstream temp_stream(line);
+        std::string first_word;
+        temp_stream >> first_word;
+        first_word = StringUtils::to_upper(first_word);
+
+        // This is the corrected logic for skipping the TYPE blocks
+        if (skipping_type_block) {
+            if (first_word == "ENDTYPE") {
+                skipping_type_block = false;
+            }
+            current_source_line++;
+            continue;
+        }
+        else if (first_word == "TYPE") {
+            skipping_type_block = true;
+            current_source_line++;
+            continue;
+        }
+
         if (tokenize(line, current_source_line++, out_p_code, *target_func_table) != 0) {
-            this->active_function_table = nullptr; // Reset on error
+            this->active_function_table = nullptr;
             return 1;
         }
     }
@@ -1475,25 +1555,28 @@ BasicValue NeReLaBasic::parse_primary() {
     if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
         pcode++;
         std::string var_or_qual_name = to_upper(read_string(*this));
+
         if (var_or_qual_name.find('.') != std::string::npos) {
-#ifdef JDCOM
-            auto [final_obj, final_member] = resolve_com_chain(var_or_qual_name);
+            auto [final_obj, final_member] = resolve_dot_chain(var_or_qual_name);
             if (Error::get() != 0) return {};
-            if (final_member.empty()) {
-                current_value = final_obj;
+            if (final_member.empty()) { current_value = final_obj; }
+            else if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
+                auto& map_ptr = std::get<std::shared_ptr<Map>>(final_obj);
+                if (map_ptr && map_ptr->data.count(final_member)) {
+                    current_value = map_ptr->data.at(final_member);
+                }
+                else { Error::set(3, runtime_current_line, "Member not found: " + final_member); return {}; }
             }
-            else {
-                if (!std::holds_alternative<ComObject>(final_obj)) { Error::set(15, runtime_current_line); return {}; }
+#ifdef JDCOM
+            else if (std::holds_alternative<ComObject>(final_obj)) {
                 IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
                 _variant_t result_vt;
                 HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt, DISPATCH_PROPERTYGET);
-                if (FAILED(hr)) { Error::set(12, runtime_current_line); return {}; }
+                if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property not found: " + final_member); return {}; }
                 current_value = variant_t_to_basic_value(result_vt, *this);
             }
-#else
-            Error::set(1, runtime_current_line);
-            return {};
 #endif
+            else { Error::set(15, runtime_current_line, "Invalid object for dot notation."); return {}; }
         }
         else {
             current_value = get_variable(*this, var_or_qual_name);
@@ -1529,11 +1612,13 @@ BasicValue NeReLaBasic::parse_primary() {
         }
         else if (identifier_being_called.find('.') != std::string::npos) {
 #ifdef JDCOM
-            auto [final_obj, final_method] = resolve_com_chain(identifier_being_called);
+            auto [final_obj, final_method] = resolve_dot_chain(identifier_being_called);
             if (Error::get() != 0) return {};
-            if (!std::holds_alternative<ComObject>(final_obj)) { Error::set(15, runtime_current_line); return {}; }
+            if (!std::holds_alternative<ComObject>(final_obj)) {
+                Error::set(15, runtime_current_line, "Methods can only be called on COM objects."); return {};
+            }
             IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-            if (!pDisp) { Error::set(1, runtime_current_line); return {}; }
+            if (!pDisp) { Error::set(1, runtime_current_line, "Uninitialized COM object."); return {}; }
             std::vector<BasicValue> com_args;
             if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
             if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
@@ -1549,132 +1634,82 @@ BasicValue NeReLaBasic::parse_primary() {
             HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
             if (FAILED(hr)) {
                 hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
-                if (FAILED(hr)) { Error::set(12, runtime_current_line); return {}; }
+                if (FAILED(hr)) { Error::set(12, runtime_current_line, "Failed to call COM method or get property '" + final_method + "'"); return {}; }
             }
             current_value = variant_t_to_basic_value(result_vt, *this);
 #else
-            Error::set(22, runtime_current_line);
-            return {};
+            Error::set(22, runtime_current_line, "Unknown function: " + identifier_being_called); return {};
 #endif
         }
-        else {
-            Error::set(22, runtime_current_line); return {};
-        }
+        else { Error::set(22, runtime_current_line, "Unknown function: " + real_func_to_call); return {}; }
     }
     else if (token == Tokens::ID::JD_TRUE) {
-        pcode++;
-        current_value = true;
+        pcode++; current_value = true;
     }
     else if (token == Tokens::ID::JD_FALSE) {
-        pcode++;
-        current_value = false;
+        pcode++; current_value = false;
     }
     else if (token == Tokens::ID::NUMBER) {
-        pcode++; // Consume the NUMBER token
-        double value;
+        pcode++; double value;
         memcpy(&value, &(*active_p_code)[pcode], sizeof(double));
         pcode += sizeof(double);
         current_value = value;
     }
     else if (token == Tokens::ID::STRING) {
-        pcode++; // Consume STRING token
-        current_value = read_string(*this);
+        pcode++; current_value = read_string(*this);
     }
     else if (token == Tokens::ID::CONSTANT) {
-        pcode++; // Consume CONSTANT token
-        current_value = builtin_constants.at(read_string(*this));
+        pcode++; current_value = builtin_constants.at(read_string(*this));
     }
     else if (token == Tokens::ID::FUNCREF) {
-        pcode++;
-        current_value = FunctionRef{ to_upper(read_string(*this)) };
+        pcode++; current_value = FunctionRef{ to_upper(read_string(*this)) };
     }
     else if (token == Tokens::ID::C_LEFTBRACKET) {
         current_value = parse_array_literal();
     }
     else if (token == Tokens::ID::C_LEFTPAREN) {
-        pcode++;
-        current_value = evaluate_expression();
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            Error::set(18, runtime_current_line);
-            return {};
-        }
-        pcode++; // Consume ')'
+        pcode++; current_value = evaluate_expression();
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTPAREN) { Error::set(18, runtime_current_line); return {}; }
     }
-    else {
-        Error::set(1, runtime_current_line); // Syntax error / Invalid start of expression
-        return {};
-    }
-
+    else { Error::set(1, runtime_current_line); return {}; }
     if (Error::get() != 0) return {};
-
-    // Loop to handle chained accessors for JSON/Arrays
     while (true) {
         Tokens::ID accessor_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-
-        if (accessor_token == Tokens::ID::C_LEFTBRACKET) { // Array access: [...]
-            pcode++; // Consume '['
-
-            BasicValue index_val = evaluate_expression();
-            if (Error::get() != 0) return {};
-
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-                Error::set(16, runtime_current_line); return {};
-            }
-
+        if (accessor_token == Tokens::ID::C_LEFTBRACKET) {
+            pcode++; BasicValue index_val = evaluate_expression(); if (Error::get() != 0) return {};
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) { Error::set(16, runtime_current_line); return {}; }
             size_t index = static_cast<size_t>(to_double(index_val));
-
             if (std::holds_alternative<std::shared_ptr<Array>>(current_value)) {
                 const auto& arr_ptr = std::get<std::shared_ptr<Array>>(current_value);
-                if (!arr_ptr || index >= arr_ptr->data.size()) {
-                    Error::set(10, runtime_current_line); return {};
-                }
+                if (!arr_ptr || index >= arr_ptr->data.size()) { Error::set(10, runtime_current_line); return {}; }
                 BasicValue next_val = arr_ptr->data[index];
                 current_value = std::move(next_val);
             }
             else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
                 const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
-                if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) {
-                    Error::set(10, runtime_current_line); return {};
-                }
+                if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) { Error::set(10, runtime_current_line); return {}; }
                 current_value = json_to_basic_value(json_ptr->data[index]);
             }
-            else {
-                Error::set(15, runtime_current_line); return {}; // Type Mismatch
-            }
+            else { Error::set(15, runtime_current_line); return {}; }
         }
-        else if (accessor_token == Tokens::ID::C_LEFTBRACE) { // Map access: {...}
-            pcode++; // Consume '{'
-
-            BasicValue key_val = evaluate_expression();
-            if (Error::get() != 0) return {};
+        else if (accessor_token == Tokens::ID::C_LEFTBRACE) {
+            pcode++; BasicValue key_val = evaluate_expression(); if (Error::get() != 0) return {};
             std::string key = to_string(key_val);
-
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACE) {
-                Error::set(17, runtime_current_line); return {};
-            }
-
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACE) { Error::set(17, runtime_current_line); return {}; }
             if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
                 const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
-                if (!map_ptr || map_ptr->data.find(key) == map_ptr->data.end()) {
-                    Error::set(3, runtime_current_line); return {};
-                }
+                if (!map_ptr || map_ptr->data.find(key) == map_ptr->data.end()) { Error::set(3, runtime_current_line); return {}; }
                 BasicValue next_val = map_ptr->data.at(key);
                 current_value = std::move(next_val);
             }
             else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
                 const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
-                if (!json_ptr || !json_ptr->data.is_object() || !json_ptr->data.contains(key)) {
-                    Error::set(3, runtime_current_line); return {};
-                }
+                if (!json_ptr || !json_ptr->data.is_object() || !json_ptr->data.contains(key)) { Error::set(3, runtime_current_line); return {}; }
                 current_value = json_to_basic_value(json_ptr->data.at(key));
             }
-            else {
-                Error::set(15, runtime_current_line); return {}; // Type Mismatch
-            }
+            else { Error::set(15, runtime_current_line); return {}; }
         }
-        else {
-            break; // No more accessors
-        }
+        else { break; }
     }
     return current_value;
 }

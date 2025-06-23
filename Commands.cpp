@@ -328,51 +328,62 @@ void Commands::do_dim(NeReLaBasic& vm) {
     else
     {
         // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
-        // This logic remains unchanged.
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
             Error::set(1, vm.runtime_current_line); return;
         }
 
-        // Read the single token for the type name.
+        // Get the token that represents the type
         Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
 
-        // This is a temporary enum for internal logic, not to be confused with DataType in Types.hpp
-        enum class DeclaredType { T_INT, T_DBL, T_STR, T_DATE, T_BOOL, T_MAP, T_UNKNOWN };
-        DeclaredType declared_type = DeclaredType::T_UNKNOWN;
         BasicValue default_value;
+        bool type_found = true; // Assume success
 
-        // Use a switch on the token ID, which is fast and robust.
         switch (type_token) {
-        case Tokens::ID::INT:
-            declared_type = DeclaredType::T_INT;
-            default_value = 0;
+        case Tokens::ID::INT:       default_value = 0; break;
+        case Tokens::ID::DOUBLE:    default_value = 0.0; break;
+        case Tokens::ID::STRTYPE:   default_value = std::string(""); break;
+        case Tokens::ID::DATE:      default_value = DateTime{}; break;
+        case Tokens::ID::BOOL:      default_value = false; break;
+        case Tokens::ID::MAP:       default_value = std::make_shared<Map>(); break;
+
+            // This case handles user-defined types, which are tokenized as VARIANT.
+        case Tokens::ID::VARIANT: {
+            // The type name is a string that follows the VARIANT token.
+            std::string type_name_str = to_upper(read_string(vm));
+            if (vm.user_defined_types.count(type_name_str)) {
+                const auto& type_info = vm.user_defined_types.at(type_name_str);
+                auto udt_instance = std::make_shared<Map>();
+
+                for (const auto& member_pair : type_info.members) {
+                    const auto& member_info = member_pair.second;
+                    BasicValue member_default_val;
+                    switch (member_info.type_id) {
+                    case DataType::INTEGER:     member_default_val = 0; break;
+                    case DataType::STRING:      member_default_val = std::string(""); break;
+                    case DataType::BOOL:        member_default_val = false; break;
+                    case DataType::DATETIME:    member_default_val = DateTime{}; break;
+                    case DataType::MAP:         member_default_val = std::make_shared<Map>(); break;
+                    default:                    member_default_val = 0.0; break;
+                    }
+                    udt_instance->data[member_info.name] = member_default_val;
+                }
+                default_value = udt_instance;
+            }
+            else {
+                type_found = false;
+                Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str + "'");
+            }
             break;
-        case Tokens::ID::DOUBLE:
-            declared_type = DeclaredType::T_DBL;
-            default_value = 0.0;
-            break;
-        case Tokens::ID::STRTYPE:
-            declared_type = DeclaredType::T_STR;
-            default_value = std::string("");
-            break;
-        case Tokens::ID::DATE:
-            declared_type = DeclaredType::T_DATE;
-            default_value = DateTime{};
-            break;
-        case Tokens::ID::BOOL:
-            declared_type = DeclaredType::T_BOOL;
-            default_value = false;
-            break;
-        case Tokens::ID::MAP:
-            declared_type = DeclaredType::T_MAP;
-            default_value = std::make_shared<Map>();
-            break;
+        }
         default:
-            Error::set(1, vm.runtime_current_line); // Syntax Error: Unknown or invalid type name
-            return;
+            type_found = false;
+            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
+            break;
         }
 
-        set_variable(vm, var_name, default_value);
+        if (type_found) {
+            set_variable(vm, var_name, default_value);
+        }
     }
 }
 
@@ -505,7 +516,7 @@ void Commands::do_let(NeReLaBasic& vm) {
             if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
             vm.pcode++;
         }
-        vm.pcode++; 
+        vm.pcode++;
 
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
@@ -531,7 +542,7 @@ void Commands::do_let(NeReLaBasic& vm) {
         }
     }
     // --- Case 2: MAP ASSIGNMENT  ---
-    else if (var_type_token == Tokens::ID::MAP_ACCESS) { 
+    else if (var_type_token == Tokens::ID::MAP_ACCESS) {
         // Handle map assignment: my_map{"key"} = value
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTBRACE) {
             Error::set(1, vm.runtime_current_line); return;
@@ -563,38 +574,46 @@ void Commands::do_let(NeReLaBasic& vm) {
     }
     // --- Case 3: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
     else {
-#ifdef JDCOM
-        // Check if it's a COM property assignment (e.g. MyObj.Value = 1)
+        // --- CORRECTED: Logic for dot-notation assignment ---
         if (name.find('.') != std::string::npos) {
-            // It has a dot, so it's a qualified name for assignment
             if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
                 Error::set(1, vm.runtime_current_line); return;
             }
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
 
-            // Use the new helper to resolve the chain up to the final object
-            auto [final_obj, final_member] = vm.resolve_com_chain(name);
+            auto [final_obj, final_member] = vm.resolve_dot_chain(name);
             if (Error::get() != 0) return;
 
-            if (!std::holds_alternative<ComObject>(final_obj)) {
-                Error::set(15, vm.runtime_current_line); return;
+            // Case 1: The target is a User-Defined Type (a Map)
+            if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
+                auto& map_ptr = std::get<std::shared_ptr<Map>>(final_obj);
+                if (map_ptr) {
+                    map_ptr->data[final_member] = value_to_assign;
+                }
+                else {
+                    Error::set(3, vm.runtime_current_line, "Cannot assign to member of a null object.");
+                }
             }
-            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-            if (!pDisp) { Error::set(1, vm.runtime_current_line); return; }
-
-            _variant_t vt_value = basic_value_to_variant_t(value_to_assign);
-            _variant_t result_vt_unused;
-
-            // Perform a PROPERTYPUT on the final member
-            HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt_unused, DISPATCH_PROPERTYPUT, &vt_value);
-            if (FAILED(hr)) {
-                Error::set(12, vm.runtime_current_line); // General COM error
-                return;
+#ifdef JDCOM
+            // Case 2: The target is a COM Object
+            else if (std::holds_alternative<ComObject>(final_obj)) {
+                IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+                if (!pDisp) { Error::set(1, vm.runtime_current_line, "Uninitialized COM object."); return; }
+                _variant_t vt_value = basic_value_to_variant_t(value_to_assign);
+                _variant_t result_vt_unused;
+                HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt_unused, DISPATCH_PROPERTYPUT, &vt_value);
+                if (FAILED(hr)) {
+                    Error::set(12, vm.runtime_current_line, "Failed to set COM property '" + final_member + "'");
+                    return;
+                }
+            }
+#endif
+            else {
+                Error::set(15, vm.runtime_current_line, "Dot notation can only be used on objects and user-defined types.");
             }
         }
         else {
-#endif
             // It's a regular variable assignment (e.g. A = 10)
             if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
                 Error::set(1, vm.runtime_current_line); return;
@@ -602,9 +621,7 @@ void Commands::do_let(NeReLaBasic& vm) {
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
             set_variable(vm, name, value_to_assign);
-#ifdef JDCOM
         }
-#endif
     }
 }
 

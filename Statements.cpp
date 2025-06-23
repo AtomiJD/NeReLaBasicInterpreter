@@ -26,6 +26,8 @@ namespace {
         {"ENDFUNC", Tokens::ID::ENDFUNC},
         {"SUB",    Tokens::ID::SUB},
         {"ENDSUB", Tokens::ID::ENDSUB},
+        {"TYPE",    Tokens::ID::TYPE},      
+        {"ENDTYPE",Tokens::ID::ENDTYPE},  
         {"FOR",     Tokens::ID::FOR},
         {"IF",      Tokens::ID::IF},
         {"THEN",    Tokens::ID::THEN},

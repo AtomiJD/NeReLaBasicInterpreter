@@ -93,6 +93,18 @@ public:
         uint16_t source_line;           // For error reporting
     };
 
+    // --- Structures for User-Defined Types ---
+    struct MemberInfo {
+        std::string name;
+        DataType type_id = DataType::DOUBLE; // Default type
+    };
+
+    struct TypeInfo {
+        std::string name;
+        // Using a map for members allows for quick lookup
+        std::map<std::string, MemberInfo> members;
+    };
+
     // This table will hold our built-in constants like 'vbNewLine' and 'PI'
     std::map<std::string, BasicValue> builtin_constants;
 
@@ -122,7 +134,7 @@ public:
 
     // -- - Symbol Tables for Variables-- -
     std::unordered_map<std::string, BasicValue> variables;
-    //std::unordered_map<std::string, DataType> variable_types;
+    std::map<std::string, TypeInfo> user_defined_types; // Storage for UDTs
 
     std::unordered_map<std::string, uint16_t> label_addresses;
 
@@ -167,7 +179,8 @@ public:
     void start();  // The main REPL
     void execute(const std::vector<uint8_t>& code_to_run);
     bool loadSourceFromFile(const std::string& filename);
-    std::pair<BasicValue, std::string> resolve_com_chain(const std::string& chain_string);
+    std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
+    void pre_scan_and_parse_types();
 
     // --- New Declarations for Expression Parsing ---
     BasicValue evaluate_expression();

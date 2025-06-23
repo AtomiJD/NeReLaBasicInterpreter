@@ -2211,9 +2211,9 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SCREEN", -1, builtin_screen);
     register_proc("PSET", -1, builtin_pset);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
-    register_proc("LINE", -1, builtin_line);     // <-- ADD THIS
-    register_proc("RECT", -1, builtin_rect);     // <-- ADD THIS
-    register_proc("CIRCLE", -1, builtin_circle); // <-- ADD THIS
+    register_proc("LINE", -1, builtin_line);     
+    register_proc("RECT", -1, builtin_rect);     
+    register_proc("CIRCLE", -1, builtin_circle); 
 #endif
 #ifdef JDCOM
     register_func("CREATEOBJECT", 1, builtin_create_object);

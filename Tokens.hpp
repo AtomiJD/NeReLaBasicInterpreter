@@ -82,7 +82,8 @@ namespace Tokens {
         EXPORT = 0x48, // c++20 module
         IMPORT = 0x49, // c++20 module
         JSON = 0x4A,
-        FLUPP = 0x4C,
+        TYPE = 0x4B,    
+        ENDTYPE = 0x4C, 
         INPUT = 0x4D, 
         STOP = 0x50,    
         RESUME = 0x51, 
@@ -90,6 +91,7 @@ namespace Tokens {
         C_RIGHTBRACE = 0x53, 
         MAP_ACCESS = 0x54,
         ONERRORCALL = 0x55,
+        C_DOT = 0x56,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,
