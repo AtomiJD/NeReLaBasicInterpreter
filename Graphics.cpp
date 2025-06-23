@@ -18,7 +18,7 @@ bool Graphics::init(const std::string& title, int width, int height) {
         return false;
     }
 
-    std:bool success = SDL_CreateWindowAndRenderer("Hello World", 800, 600, SDL_WINDOW_FULLSCREEN, &window, &renderer);
+    bool success = SDL_CreateWindowAndRenderer(title.c_str(), width, height, 0, &window, &renderer); //SDL_WINDOW_FULLSCREEN removed
     if (!success) {
         TextIO::print("Window could not be created! SDL_Error: " + std::string(SDL_GetError()) + "\n");
         return false;

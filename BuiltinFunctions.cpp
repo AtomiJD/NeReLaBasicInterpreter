@@ -1879,7 +1879,7 @@ BasicValue builtin_cls(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
             b = static_cast<Uint8>(to_double(args[2]));
         }
         vm.graphics_system.clear_screen(r, g, b);
-        vm.graphics_system.update_screen(); // CLS should be immediate
+        //vm.graphics_system.update_screen(); // CLS should be immediate
     }
     else {
         // Otherwise, it clears the text console.
