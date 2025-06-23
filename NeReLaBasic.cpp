@@ -214,14 +214,14 @@ void NeReLaBasic::start() {
             continue;
         }
 
-        // -- - Special handling for RESUME-- -
+        // --- Special handling for RESUME ---
         std::string temp_line = inputLine;
         StringUtils::trim(temp_line);
         if (StringUtils::to_upper(temp_line) == "RESUME") {
             if (is_stopped) {
                 TextIO::print("Resuming...\n");
                 is_stopped = false;
-                execute(program_p_code); // Continues from the saved pcode
+                execute(program_p_code, true); // Continues from the saved pcode
                 if (Error::get() != 0) Error::print();
             }
             else {
@@ -237,7 +237,7 @@ void NeReLaBasic::start() {
             continue;
         }
         // Execute the direct-mode p_code
-        execute(direct_p_code);
+        execute(direct_p_code, false);
 
         if (Error::get() != 0) {
             Error::print();
@@ -1149,6 +1149,11 @@ BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info
     // 4. Execute statements until the function returns
     this->pcode = func_info.start_pcode;
     while (call_stack.size() > initial_stack_depth) {
+        // If STOP is called, break this function's execution loop immediately.
+        // The call_stack is preserved, and the main execute() loop will handle the halt.
+        if (is_stopped) {
+            break;
+        }
         if (Error::get() != 0) {
             // Unwind stack on error to prevent infinite loops
             while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
@@ -1165,7 +1170,7 @@ BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info
     return variables["RETVAL"];
 }
 
-void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
+void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run, bool resume_mode) {
     // If there's no code to run, do nothing.
     if (code_to_run.empty()) {
         return;
@@ -1174,7 +1179,10 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
     // Set the active p_code pointer for the duration of this execution.
     auto prev_active_p_code = active_p_code;
     active_p_code = &code_to_run;
-    pcode = 0;
+    // Only reset the program counter if we are not resuming.
+    if (!resume_mode) {
+        pcode = 0;
+    }
     Error::clear();
     g_vm_instance_ptr = this;
 
@@ -1206,8 +1214,15 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run) {
             }
         }
         // Use the active_p_code pointer to access the bytecode
+
+        if (resume_mode) {
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR)
+                pcode++; // Consume CR
+        }
+
         runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
         pcode += 2;
+        
 
         if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
             break;

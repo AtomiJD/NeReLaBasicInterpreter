@@ -177,7 +177,7 @@ public:
     // --- Member Functions ---
     NeReLaBasic(); // Constructor
     void start();  // The main REPL
-    void execute(const std::vector<uint8_t>& code_to_run);
+    void execute(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     bool loadSourceFromFile(const std::string& filename);
     std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
     void pre_scan_and_parse_types();

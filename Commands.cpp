@@ -1326,7 +1326,7 @@ void Commands::do_run(NeReLaBasic& vm) {
 
     TextIO::print("Running...\n");
     // Execute from the main program buffer
-    vm.execute(vm.program_p_code);
+    vm.execute(vm.program_p_code, false);
 
     // If the execution resulted in an error, print it
     if (Error::get() != 0) {
