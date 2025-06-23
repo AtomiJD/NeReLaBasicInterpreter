@@ -11,7 +11,7 @@ PRINT "Created an empty party array."
 
 ' 3. Create and populate the first character instance
 DIM Player1 AS T_Character
-Player1.Name = "Arion"
+Player1.Name = "Atomi"
 Player1.HitPoints = 150
 Player1.Strength = 18.5
 
@@ -33,6 +33,7 @@ PRINT
 ' 7. Access and print the data from the array
 PRINT "--- Current Party ---"
 PRINT "Party size: "; LEN(Party)
+PRINT "First Item in Array Name:"
 print party[0].Name
 
 PRINT

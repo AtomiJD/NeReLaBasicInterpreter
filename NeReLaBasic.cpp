@@ -23,36 +23,6 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
 NeReLaBasic* g_vm_instance_ptr = nullptr;
 
-namespace StringUtils {
-    // Left trim
-    static inline void ltrim(std::string& s) {
-        s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
-            return !std::isspace(ch);
-            }));
-    }
-
-    // Right trim
-    static inline void rtrim(std::string& s) {
-        s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
-            return !std::isspace(ch);
-            }).base(), s.end());
-    }
-
-    // Trim from both ends
-    void trim(std::string& s) {
-        ltrim(s);
-        rtrim(s);
-    }
-
-    // to_upper
-    std::string to_upper(std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(),
-            [](unsigned char c) { return std::toupper(c); });
-        return s;
-    }
-} // namespace StringUtils
-
-
 // Helper function to convert a string from the BASIC source to a number.
 // Supports decimal, hexadecimal ('$'), and binary ('%').
 uint16_t stringToWord(const std::string& s) {

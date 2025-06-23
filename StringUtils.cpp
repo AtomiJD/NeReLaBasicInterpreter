@@ -34,3 +34,30 @@ void StringUtils::strip(std::string& str) {
     // Erase trailing whitespace
     str.erase(std::find_if(str.rbegin(), str.rend(), is_not_space).base(), str.end());
 }
+
+// Left trim
+static inline void StringUtils::ltrim(std::string& s) {
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+        }));
+}
+
+// Right trim
+static inline void StringUtils::rtrim(std::string& s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+        }).base(), s.end());
+}
+
+// Trim from both ends
+void StringUtils::trim(std::string& s) {
+    StringUtils::ltrim(s);
+    StringUtils::rtrim(s);
+}
+
+// to_upper
+std::string StringUtils::to_upper(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+        [](unsigned char c) { return std::toupper(c); });
+    return s;
+}

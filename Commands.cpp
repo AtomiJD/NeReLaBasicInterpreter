@@ -6,6 +6,7 @@
 #include <iostream>
 #include <conio.h>
 #include "Commands.hpp"
+#include "StringUtils.hpp"
 #include "NeReLaBasic.hpp" // We need the full class definition here
 #include "TextIO.hpp"
 #include "Tokens.hpp"
@@ -1290,9 +1291,60 @@ void Commands::do_compile(NeReLaBasic& vm) {
     }
 }
 
+// Commands.cpp
+
 void Commands::do_stop(NeReLaBasic& vm) {
     TextIO::print("\nBreak in line " + std::to_string(vm.runtime_current_line) + "\n");
-    vm.is_stopped = true;
+
+    bool paused = true;
+    std::string inputLine;
+
+    while (paused) {
+        // We must clear any error from the previous debug command.
+        Error::clear();
+        TextIO::print("Ready (paused)\n? ");
+
+        if (!std::getline(std::cin, inputLine)) {
+            paused = false;
+            std::cin.clear();
+            continue;
+        }
+
+        // --- Handle Meta-Commands First ---
+        std::string command_str = inputLine;
+        StringUtils::trim(command_str);
+        if (to_upper(command_str) == "RESUME") {
+            paused = false;
+            TextIO::print("Resuming...\n");
+            continue;
+        }
+
+        // --- If not a meta-command, tokenize and execute it ---
+
+        // Save the essential pointers of the paused program.
+        auto original_pcode = vm.pcode;
+        const auto* original_active_pcode = vm.active_p_code;
+
+        // Tokenize the direct-mode line into its own p-code buffer.
+        vm.direct_p_code.clear();
+        if (vm.tokenize(inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
+            Error::print(); // Print tokenization error
+            continue;       // And prompt again
+        }
+
+        // Execute the single command from the direct_p_code buffer.
+        // We are NOT in resume_mode for this single command execution.
+        vm.execute(vm.direct_p_code, false);
+
+        // Restore the pointers to the main program's state.
+        vm.pcode = original_pcode;
+        vm.active_p_code = original_active_pcode;
+
+        // If the command itself caused a runtime error, print it.
+        if (Error::get() != 0) {
+            Error::print();
+        }
+    }
 }
 
 void Commands::do_run(NeReLaBasic& vm) {

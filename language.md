@@ -72,14 +72,8 @@ You can chain property accesses and method calls for COM objects.
 ```basic
 objXL = CREATEOBJECT("Excel.Application")
 objXL.Visible = TRUE
-
-' Old way:
-' wbs = objXL.Workbooks
-' wb = wbs.Add()
-
-' New chained way:
 wb = objXL.Workbooks.Add()
-objXL.ActiveSheet.Cells(1, 1).Value = "Hello from a Chain!"
+objXL.ActiveSheet.Cells(1, 1).Value = "Hello from a jdBasic!"
 ```
 
 ## Commands
@@ -144,15 +138,19 @@ objXL.ActiveSheet.Cells(1, 1).Value = "Hello from a Chain!"
   * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
   * **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
   * **`IOTA(N)`**: Generates a 1D array of numbers from 1 to N.
-  * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)` **: Functions that reduce an array to a single value (e.g.,  `SUM(my\_array)\`).
+  * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g.,  `SUM(my\_array)\`).
   * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
   * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
   * **`REVERSE(array)`**: Reverses the elements of an array.
   * **`TRANSPOSE(matrix)`**: Transposes a 2D matrix.
   * **`MATMUL(matrixA, matrixB)`**: Performs matrix multiplication.
+  * **`MVLET(matrix, dimension, index, vector) -> matrix`**: Replaces a row or column in a matrix with a vector, returning a new matrix.
+  * **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
+  * **`SOLVE(matrix A, vextor b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
+  * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
   * **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix.
   * **`GRADE(vector)`**: Returns the indices that would sort the vector.
-  * **`OUTER(vecA, vecB, op$)`**: Creates an outer product table using an operator (+, -, \*, /).
+  * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, \*, /, MOD, >, <, =, ^) or a reference to a function (srq@).
 
 ### File I/O Functions
 
@@ -183,5 +181,3 @@ The `EDIT` command launches a simple, built-in text editor.
   * **`Ctrl+F`**: Find text. You will be prompted for a search query.
   * **`F3`**: Find the next occurrence of the last search query.
   * **`Ctrl+G`**: Go to a specific line number.
-
-You can manage your Apps settings in [Gemini Apps Activity](https://myactivity.google.com/product/gemini).

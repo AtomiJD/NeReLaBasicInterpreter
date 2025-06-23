@@ -194,6 +194,7 @@ public:
     uint8_t tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source);
     void statement();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
+    uint8_t tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, FunctionTable& compilation_func_table);
 
 private:
     void init_basic();
@@ -202,8 +203,6 @@ private:
 
     // --- Lexer---
     Tokens::ID parse(NeReLaBasic& vm, bool is_start_of_statement);
-    uint8_t tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, FunctionTable& compilation_func_table);
-
     
 };
 

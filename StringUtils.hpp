@@ -17,4 +17,16 @@ namespace StringUtils {
 
     // Removes leading and trailing whitespace from a string.
     void strip(std::string& str);
+
+    // Removes leading whitespace.
+    void ltrim(std::string& s);
+
+    // Removes trailing whitespace.
+    void rtrim(std::string& s);
+
+    // Removes leading and trailing whitespace.
+    void trim(std::string& s);
+
+    // Converts a string to uppercase.
+    std::string to_upper(std::string s);
 }
