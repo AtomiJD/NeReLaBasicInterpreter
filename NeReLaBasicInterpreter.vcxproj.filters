@@ -103,6 +103,7 @@
     <None Include="NetworkManager.hpp">
       <Filter>Header Files</Filter>
     </None>
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="jdBasic.ico">
@@ -113,5 +114,8 @@
     <ResourceCompile Include="resources.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="vscode_readme.txt" />
   </ItemGroup>
 </Project>
