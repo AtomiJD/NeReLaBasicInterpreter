@@ -103,13 +103,11 @@ void Error::print() {
         // Check if the errorCode has a standard message.
         if (current_error_code < errorMessages.size()) {
             message = errorMessages[current_error_code];
-        }
-        // If not, check if a custom message was provided.
+        } else // If not, check if a custom message was provided.
         if (!custom_error_message.empty()) {
             message = message + ", " + custom_error_message;
-        }
-        // Otherwise, use a generic fallback.
-        else {
+        } else // Otherwise, use a generic fallback.
+        {
             message = "Unknown Error";
         }
 

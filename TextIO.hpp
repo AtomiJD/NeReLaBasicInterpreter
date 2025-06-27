@@ -1,6 +1,29 @@
 // TextIO.hpp
 #pragma once
+#include <iostream>
+#include <iomanip> // For std::hex
 #include <string>
+#include <sstream>
+#include <streambuf>
+#include <cstdint> // For uint16_t, uint8_t
+
+// The CoutRedirector class from above
+class CoutRedirector {
+private:
+    std::stringstream m_targetStream;
+    std::streambuf* m_originalBuffer;
+public:
+    CoutRedirector() {
+        m_originalBuffer = std::cout.rdbuf();
+        std::cout.rdbuf(m_targetStream.rdbuf());
+    }
+    ~CoutRedirector() {
+        std::cout.rdbuf(m_originalBuffer);
+    }
+    std::string getString() const {
+        return m_targetStream.str();
+    }
+};
 
 // A namespace for all text input/output related functions
 namespace TextIO {

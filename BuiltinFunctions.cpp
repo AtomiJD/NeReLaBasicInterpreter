@@ -2630,12 +2630,12 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 #ifdef HTTP
     // These will effectively be available as "HTTP.GET$", "HTTP.SETHEADER", etc.,
     // after the HTTP module is compiled and its exported functions are linked.
-    register_func("HTTPGET$", 1, builtin_http_get);
-    register_proc("HTTPSETHEADER", 2, builtin_http_setheader);
-    register_proc("HTTPCLEARHEADERS", 0, builtin_http_clearheaders);
-    register_func("HTTPSTATUSCODE", 0, builtin_http_statuscode);
-    register_func("HTTPPOST$", 3, builtin_httppost);
-    register_func("HTTPPUT$", 3, builtin_httpput);
+    register_func("HTTP.GET$", 1, builtin_http_get);
+    register_proc("HTTP.SETHEADER", 2, builtin_http_setheader);
+    register_proc("HTTP.CLEARHEADERS", 0, builtin_http_clearheaders);
+    register_func("HTTP.STATUSCODE", 0, builtin_http_statuscode);
+    register_func("HTTP.POST$", 3, builtin_httppost);
+    register_func("HTTP.PUT$", 3, builtin_httpput);
 #endif
 
     register_func("JSON.PARSE$", 1, builtin_json_parse);

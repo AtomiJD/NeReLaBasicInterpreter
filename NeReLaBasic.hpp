@@ -9,13 +9,15 @@
 #include "Tokens.hpp"
 #include "NetworkManager.hpp"
 #include <functional> 
+#include <future>
 #ifdef SDL3
 #include "Graphics.hpp"
 #endif
 
 
-// Forward declaration of NetworkManager class1
+// Forward declarations
 class NetworkManager;
+class DAPHandler;
 
 class NeReLaBasic {
 public:
@@ -64,8 +66,8 @@ public:
     using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>;
 
     struct StackFrame {
-//        std::string return_module_name;
-        //std::map<std::string, FunctionInfo> original_function_table;
+        std::string function_name;
+        uint16_t linenr;
         std::unordered_map<std::string, BasicValue> local_variables;
         uint16_t return_pcode = 0; // Where to jump back to after the function ends
         const std::vector<uint8_t>* return_p_code_ptr;
@@ -104,6 +106,34 @@ public:
         // Using a map for members allows for quick lookup
         std::map<std::string, MemberInfo> members;
     };
+
+    enum class DebugState {
+        RUNNING,    // Normal execution
+        PAUSED,     // Stopped at a breakpoint, step, etc.
+        STEP_OVER   
+    };
+
+    DebugState debug_state = DebugState::RUNNING;
+
+    std::promise<bool> dap_launch_promise; // Used to signal that launch has occurred
+    std::string program_to_debug; // Will hold the path from the launch request
+
+    DAPHandler* dap_handler = nullptr;
+
+    // Threading primitives for DAP communication
+    std::mutex dap_mutex;
+    std::condition_variable dap_cv;
+    bool dap_command_received = false;
+
+    // Breakpoints: line number -> BreakpointInfo (can be just bool for now)
+    std::map<uint16_t, bool> breakpoints;
+
+    // For 'next' (step over) functionality
+    size_t step_over_stack_depth = 0;
+
+    void pause_for_debugger();
+    void resume_from_debugger();
+    void step_over();
 
     // This table will hold our built-in constants like 'vbNewLine' and 'PI'
     std::map<std::string, BasicValue> builtin_constants;
@@ -194,6 +224,7 @@ public:
     uint8_t tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source);
     void statement();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
+    void execute_repl_command(const std::vector<uint8_t>& repl_p_code);
     uint8_t tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, FunctionTable& compilation_func_table);
 
 private:

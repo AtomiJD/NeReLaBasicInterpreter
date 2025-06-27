@@ -909,6 +909,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         frame.return_pcode = vm.pcode;
         frame.previous_function_table_ptr = vm.active_function_table;
         frame.for_stack_size_on_entry = vm.for_stack.size();
+        frame.function_name = real_func_to_call;
         vm.call_stack.push_back(frame);
 
         // CONTEXT SWITCH
@@ -1009,6 +1010,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
         frame.return_pcode = vm.pcode;
         frame.previous_function_table_ptr = vm.active_function_table;
         frame.for_stack_size_on_entry = vm.for_stack.size();
+        frame.function_name = proc_name;
         for (size_t i = 0; i < proc_info.parameter_names.size(); ++i) {
             if (i < args.size()) frame.local_variables[proc_info.parameter_names[i]] = args[i];
         }
@@ -1295,7 +1297,7 @@ void Commands::do_compile(NeReLaBasic& vm) {
 
 void Commands::do_stop(NeReLaBasic& vm) {
     TextIO::print("\nBreak in line " + std::to_string(vm.runtime_current_line) + "\n");
-
+    std::string captured_output = "N/A";
     bool paused = true;
     std::string inputLine;
 

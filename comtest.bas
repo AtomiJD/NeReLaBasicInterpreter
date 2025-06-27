@@ -1,3 +1,4 @@
+
 SUB Atomi()
     PRINT "An error occurred: "; ERR
     PRINT "Error Line: "; ERL

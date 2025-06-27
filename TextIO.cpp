@@ -2,6 +2,12 @@
 #include "TextIO.hpp"
 #include <iostream>
 #include <iomanip> // For std::hex
+#include <string>
+#include <sstream>
+#include <streambuf>
+#include <cstdint> // For uint16_t, uint8_t
+
+
 
 void TextIO::print(const std::string& message) {
     std::cout << message;
