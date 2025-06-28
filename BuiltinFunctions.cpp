@@ -957,50 +957,200 @@ BasicValue builtin_split(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return 0.0; \
     }
 
-// SUM(array) -> number
+// SUM(array, [dimension]) -> number or array
 BasicValue builtin_sum(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    NUMERIC_REDUCTION_BOILERPLATE(builtin_sum, 15);
-    double total = 0.0;
-    for (const auto& val : arr_ptr->data) {
-        total += to_double(val);
+    // 1. --- Argument Validation ---
+    if (args.size() < 1 || args.size() > 2) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return 0.0;
     }
-    return total;
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to SUM must be an array.");
+        return 0.0;
+    }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) {
+        return 0.0; // Sum of empty array is 0
+    }
+
+    // 2. --- Backward Compatibility: Reduce to Scalar ---
+    if (args.size() == 1) {
+        double total = 0.0;
+        for (const auto& val : arr_ptr->data) {
+            total += to_double(val);
+        }
+        return total;
+    }
+
+    // 3. --- New Functionality: Reduce along a Dimension ---
+    if (arr_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line, "Dimensional reduction currently only supports 2D matrices.");
+        return 0.0;
+    }
+    int dimension = static_cast<int>(to_double(args[1]));
+    size_t rows = arr_ptr->shape[0];
+    size_t cols = arr_ptr->shape[1];
+
+    auto result_ptr = std::make_shared<Array>();
+
+    if (dimension == 0) { // Reduce along rows -> result is a row vector of size 'cols'
+        result_ptr->shape = { 1, cols };
+        result_ptr->data.assign(cols, 0.0); // Initialize with zeros
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) {
+                result_ptr->data[c] = to_double(result_ptr->data[c]) + to_double(arr_ptr->data[r * cols + c]);
+            }
+        }
+    }
+    else if (dimension == 1) { // Reduce along columns -> result is a column vector of size 'rows'
+        result_ptr->shape = { rows, 1 };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            double row_total = 0.0;
+            for (size_t c = 0; c < cols; ++c) {
+                row_total += to_double(arr_ptr->data[r * cols + c]);
+            }
+            result_ptr->data.push_back(row_total);
+        }
+    }
+    else {
+        Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1.");
+        return 0.0;
+    }
+
+    return result_ptr;
 }
 
-// PRODUCT(array) -> number
+// PRODUCT(array, [dimension]) -> number or array
 BasicValue builtin_product(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    NUMERIC_REDUCTION_BOILERPLATE(builtin_product, 15);
-    double total = 1.0;
-    for (const auto& val : arr_ptr->data) {
-        total *= to_double(val);
+    if (args.size() < 1 || args.size() > 2) { Error::set(8, vm.runtime_current_line); return 1.0; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line, "First argument to PRODUCT must be an array."); return 1.0; }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) { return 1.0; } // Product of empty array is 1
+
+    if (args.size() == 1) {
+        double total = 1.0;
+        for (const auto& val : arr_ptr->data) { total *= to_double(val); }
+        return total;
     }
-    return total;
+
+    if (arr_ptr->shape.size() != 2) { Error::set(15, vm.runtime_current_line, "Dimensional reduction currently only supports 2D matrices."); return 1.0; }
+    int dimension = static_cast<int>(to_double(args[1]));
+    size_t rows = arr_ptr->shape[0];
+    size_t cols = arr_ptr->shape[1];
+    auto result_ptr = std::make_shared<Array>();
+
+    if (dimension == 0) { // Reduce along rows
+        result_ptr->shape = { 1, cols };
+        result_ptr->data.assign(cols, 1.0); // Initialize with ones
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) {
+                result_ptr->data[c] = to_double(result_ptr->data[c]) * to_double(arr_ptr->data[r * cols + c]);
+            }
+        }
+    }
+    else if (dimension == 1) { // Reduce along columns
+        result_ptr->shape = { rows, 1 };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            double row_total = 1.0;
+            for (size_t c = 0; c < cols; ++c) { row_total *= to_double(arr_ptr->data[r * cols + c]); }
+            result_ptr->data.push_back(row_total);
+        }
+    }
+    else { Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1."); return 1.0; }
+    return result_ptr;
 }
 
-// MIN(array) -> number
+// MIN(array, [dimension]) -> number or array
 BasicValue builtin_min(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    NUMERIC_REDUCTION_BOILERPLATE(builtin_min, 15);
-    double min_val = to_double(arr_ptr->data[0]);
-    for (size_t i = 1; i < arr_ptr->data.size(); ++i) {
-        double current_val = to_double(arr_ptr->data[i]);
-        if (current_val < min_val) {
-            min_val = current_val;
+    if (args.size() < 1 || args.size() > 2) { Error::set(8, vm.runtime_current_line); return 0.0; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line, "First argument to MIN must be an array."); return 0.0; }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) { return 0.0; }
+
+    if (args.size() == 1) {
+        BasicValue min_val = arr_ptr->data[0];
+        for (size_t i = 1; i < arr_ptr->data.size(); ++i) {
+            if (to_double(arr_ptr->data[i]) < to_double(min_val)) { min_val = arr_ptr->data[i]; }
+        }
+        return min_val;
+    }
+
+    if (arr_ptr->shape.size() != 2) { Error::set(15, vm.runtime_current_line, "Dimensional reduction currently only supports 2D matrices."); return 0.0; }
+    int dimension = static_cast<int>(to_double(args[1]));
+    size_t rows = arr_ptr->shape[0];
+    size_t cols = arr_ptr->shape[1];
+    auto result_ptr = std::make_shared<Array>();
+
+    if (dimension == 0) { // Reduce along rows
+        result_ptr->shape = { 1, cols };
+        result_ptr->data.assign(arr_ptr->data.begin(), arr_ptr->data.begin() + cols); // Initialize with first row
+        for (size_t r = 1; r < rows; ++r) { // Start from the second row
+            for (size_t c = 0; c < cols; ++c) {
+                if (to_double(arr_ptr->data[r * cols + c]) < to_double(result_ptr->data[c])) { result_ptr->data[c] = arr_ptr->data[r * cols + c]; }
+            }
         }
     }
-    return min_val;
+    else if (dimension == 1) { // Reduce along columns
+        result_ptr->shape = { rows, 1 };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            BasicValue row_min = arr_ptr->data[r * cols]; // Initialize with first element of the row
+            for (size_t c = 1; c < cols; ++c) { // Start from second element
+                if (to_double(arr_ptr->data[r * cols + c]) < to_double(row_min)) { row_min = arr_ptr->data[r * cols + c]; }
+            }
+            result_ptr->data.push_back(row_min);
+        }
+    }
+    else { Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1."); return 0.0; }
+    return result_ptr;
 }
 
-// MAX(array) -> number
+// MAX(array, [dimension]) -> number or array
 BasicValue builtin_max(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    NUMERIC_REDUCTION_BOILERPLATE(builtin_max, 15);
-    double max_val = to_double(arr_ptr->data[0]);
-    for (size_t i = 1; i < arr_ptr->data.size(); ++i) {
-        double current_val = to_double(arr_ptr->data[i]);
-        if (current_val > max_val) {
-            max_val = current_val;
+    // This implementation is identical to MIN, just with the > operator
+    if (args.size() < 1 || args.size() > 2) { Error::set(8, vm.runtime_current_line); return 0.0; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line, "First argument to MAX must be an array."); return 0.0; }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) { return 0.0; }
+
+    if (args.size() == 1) {
+        BasicValue max_val = arr_ptr->data[0];
+        for (size_t i = 1; i < arr_ptr->data.size(); ++i) {
+            if (to_double(arr_ptr->data[i]) > to_double(max_val)) { max_val = arr_ptr->data[i]; }
+        }
+        return max_val;
+    }
+
+    if (arr_ptr->shape.size() != 2) { Error::set(15, vm.runtime_current_line, "Dimensional reduction currently only supports 2D matrices."); return 0.0; }
+    int dimension = static_cast<int>(to_double(args[1]));
+    size_t rows = arr_ptr->shape[0];
+    size_t cols = arr_ptr->shape[1];
+    auto result_ptr = std::make_shared<Array>();
+
+    if (dimension == 0) { // Reduce along rows
+        result_ptr->shape = { 1, cols };
+        result_ptr->data.assign(arr_ptr->data.begin(), arr_ptr->data.begin() + cols); // Initialize with first row
+        for (size_t r = 1; r < rows; ++r) { // Start from the second row
+            for (size_t c = 0; c < cols; ++c) {
+                if (to_double(arr_ptr->data[r * cols + c]) > to_double(result_ptr->data[c])) { result_ptr->data[c] = arr_ptr->data[r * cols + c]; }
+            }
         }
     }
-    return max_val;
+    else if (dimension == 1) { // Reduce along columns
+        result_ptr->shape = { rows, 1 };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            BasicValue row_max = arr_ptr->data[r * cols]; // Initialize with first element of the row
+            for (size_t c = 1; c < cols; ++c) { // Start from second element
+                if (to_double(arr_ptr->data[r * cols + c]) > to_double(row_max)) { row_max = arr_ptr->data[r * cols + c]; }
+            }
+            result_ptr->data.push_back(row_max);
+        }
+    }
+    else { Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1."); return 0.0; }
+    return result_ptr;
 }
 
 // Helper macro for boolean reduction functions
@@ -1016,28 +1166,80 @@ BasicValue builtin_max(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]); \
     if (!arr_ptr) return false;
 
-// ANY(array) -> boolean
+// ANY(array, [dimension]) -> boolean or array
 BasicValue builtin_any(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    BOOLEAN_REDUCTION_BOILERPLATE(builtin_any, 15);
-    if (arr_ptr->data.empty()) return false; // ANY of an empty set is false
-    for (const auto& val : arr_ptr->data) {
-        if (to_bool(val)) {
-            return true; // Short-circuit
+    if (args.size() < 1 || args.size() > 2) { Error::set(8, vm.runtime_current_line); return false; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line, "First argument to ANY must be an array."); return false; }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) { return false; } // ANY of empty is false
+
+    if (args.size() == 1) {
+        for (const auto& val : arr_ptr->data) { if (to_bool(val)) return true; }
+        return false;
+    }
+
+    if (arr_ptr->shape.size() != 2) { Error::set(15, vm.runtime_current_line, "Dimensional reduction currently only supports 2D matrices."); return false; }
+    int dimension = static_cast<int>(to_double(args[1]));
+    size_t rows = arr_ptr->shape[0];
+    size_t cols = arr_ptr->shape[1];
+    auto result_ptr = std::make_shared<Array>();
+
+    if (dimension == 0) { // Reduce along rows
+        result_ptr->shape = { 1, cols };
+        result_ptr->data.assign(cols, false); // Initialize with false
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) { result_ptr->data[c] = to_bool(result_ptr->data[c]) || to_bool(arr_ptr->data[r * cols + c]); }
         }
     }
-    return false;
+    else if (dimension == 1) { // Reduce along columns
+        result_ptr->shape = { rows, 1 };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            bool row_any = false;
+            for (size_t c = 0; c < cols; ++c) { if (to_bool(arr_ptr->data[r * cols + c])) { row_any = true; break; } }
+            result_ptr->data.push_back(row_any);
+        }
+    }
+    else { Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1."); return false; }
+    return result_ptr;
 }
 
-// ALL(array) -> boolean
+// ALL(array, [dimension]) -> boolean or array
 BasicValue builtin_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    BOOLEAN_REDUCTION_BOILERPLATE(builtin_all, 15);
-    if (arr_ptr->data.empty()) return true; // ALL of an empty set is true
-    for (const auto& val : arr_ptr->data) {
-        if (!to_bool(val)) {
-            return false; // Short-circuit
+    if (args.size() < 1 || args.size() > 2) { Error::set(8, vm.runtime_current_line); return true; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line, "First argument to ALL must be an array."); return true; }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) { return true; } // ALL of empty is true
+
+    if (args.size() == 1) {
+        for (const auto& val : arr_ptr->data) { if (!to_bool(val)) return false; }
+        return true;
+    }
+
+    if (arr_ptr->shape.size() != 2) { Error::set(15, vm.runtime_current_line, "Dimensional reduction currently only supports 2D matrices."); return true; }
+    int dimension = static_cast<int>(to_double(args[1]));
+    size_t rows = arr_ptr->shape[0];
+    size_t cols = arr_ptr->shape[1];
+    auto result_ptr = std::make_shared<Array>();
+
+    if (dimension == 0) { // Reduce along rows
+        result_ptr->shape = { 1, cols };
+        result_ptr->data.assign(cols, true); // Initialize with true
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) { result_ptr->data[c] = to_bool(result_ptr->data[c]) && to_bool(arr_ptr->data[r * cols + c]); }
         }
     }
-    return true;
+    else if (dimension == 1) { // Reduce along columns
+        result_ptr->shape = { rows, 1 };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            bool row_all = true;
+            for (size_t c = 0; c < cols; ++c) { if (!to_bool(arr_ptr->data[r * cols + c])) { row_all = false; break; } }
+            result_ptr->data.push_back(row_all);
+        }
+    }
+    else { Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1."); return true; }
+    return result_ptr;
 }
 
 // IOTA(N) -> vector
@@ -2576,12 +2778,12 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("RESHAPE", -1, builtin_reshape);
     register_func("REVERSE", 1, builtin_reverse);
     register_func("TRANSPOSE", 1, builtin_transpose);
-    register_func("SUM", 1, builtin_sum);
-    register_func("PRODUCT", 1, builtin_product);
-    register_func("MIN", 1, builtin_min);
-    register_func("MAX", 1, builtin_max);
-    register_func("ANY", 1, builtin_any);
-    register_func("ALL", 1, builtin_all);
+    register_func("SUM", -1, builtin_sum);
+    register_func("PRODUCT", -1, builtin_product);
+    register_func("MIN", -1, builtin_min);
+    register_func("MAX", -1, builtin_max);
+    register_func("ANY", -1, builtin_any);
+    register_func("ALL", -1, builtin_all);
     register_func("MATMUL", 2, builtin_matmul);
     register_func("OUTER", 3, builtin_outer);
     register_func("INTEGRATE", 3, builtin_integrate);

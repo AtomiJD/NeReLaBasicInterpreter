@@ -16,9 +16,6 @@
 #endif 
 
 int main(int argc, char* argv[]) {
-    std::ofstream logFile;
-    logFile.open("lall.txt", std::ios_base::app);
-    logFile << "Hello " << std::endl;
     // Initialize COM for the current thread
     // COINIT_APARTMENTTHREADED for single-threaded apartment (most common for UI components like Excel)
     // COINIT_MULTITHREADED for multi-threaded apartment (less common for OLE Automation)
@@ -59,7 +56,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    logFile << "DAP Mode: " + std::to_string(dap_mode) << std::endl;
     if (dap_mode) {
         DAPHandler dap_server(interpreter);
 

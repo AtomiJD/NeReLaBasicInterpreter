@@ -2154,7 +2154,7 @@ BasicValue NeReLaBasic::parse_term() {
     return left;
 }
 
-// Level 2: Handles <, >, =
+// Level 2: Handles <, >, = with element-wise array operations
 BasicValue NeReLaBasic::parse_comparison() {
     BasicValue left = parse_term(); // parse_term handles + and -
 
@@ -2167,12 +2167,87 @@ BasicValue NeReLaBasic::parse_comparison() {
         pcode++; // Consume the operator
         BasicValue right = parse_term();
 
-        // Use std::visit to handle string or number comparisons
-        // We CAPTURE the original variants `left` and `right` to check their types.
-        left = std::visit([op, &left, &right](auto&& l, auto&& r) -> BasicValue {
+        // Use std::visit to handle all type combinations
+        left = std::visit([op, this, &left, &right](auto&& l, auto&& r) -> BasicValue {
+            using LeftT = std::decay_t<decltype(l)>;
+            using RightT = std::decay_t<decltype(r)>;
+
+            // --- NEW: ARRAY COMPARISON LOGIC ---
+
+            // Case 1: Array-Array comparison
+            if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                if (!l || !r) { Error::set(15, runtime_current_line, "Comparison with null array."); return false; }
+                if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Array shape mismatch in comparison."); return false; }
+
+                auto result_ptr = std::make_shared<Array>();
+                result_ptr->shape = l->shape;
+                result_ptr->data.reserve(l->data.size());
+
+                for (size_t i = 0; i < l->data.size(); ++i) {
+                    double left_val = to_double(l->data[i]);
+                    double right_val = to_double(r->data[i]);
+                    bool result = false;
+                    switch (op) {
+                    case Tokens::ID::C_EQ: result = (left_val == right_val); break;
+                    case Tokens::ID::C_NE: result = (left_val != right_val); break;
+                    case Tokens::ID::C_LT: result = (left_val < right_val); break;
+                    case Tokens::ID::C_GT: result = (left_val > right_val); break;
+                    case Tokens::ID::C_LE: result = (left_val <= right_val); break;
+                    case Tokens::ID::C_GE: result = (left_val >= right_val); break;
+                    }
+                    result_ptr->data.push_back(result);
+                }
+                return result_ptr;
+            }
+            // Case 2: Array-Scalar comparison
+            else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
+                if (!l) { Error::set(15, runtime_current_line, "Comparison with null array."); return false; }
+                double scalar = to_double(r);
+                auto result_ptr = std::make_shared<Array>();
+                result_ptr->shape = l->shape;
+                result_ptr->data.reserve(l->data.size());
+                for (const auto& elem : l->data) {
+                    double left_val = to_double(elem);
+                    bool result = false;
+                    switch (op) {
+                    case Tokens::ID::C_EQ: result = (left_val == scalar); break;
+                    case Tokens::ID::C_NE: result = (left_val != scalar); break;
+                    case Tokens::ID::C_LT: result = (left_val < scalar); break;
+                    case Tokens::ID::C_GT: result = (left_val > scalar); break;
+                    case Tokens::ID::C_LE: result = (left_val <= scalar); break;
+                    case Tokens::ID::C_GE: result = (left_val >= scalar); break;
+                    }
+                    result_ptr->data.push_back(result);
+                }
+                return result_ptr;
+            }
+            // Case 3: Scalar-Array comparison
+            else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                if (!r) { Error::set(15, runtime_current_line, "Comparison with null array."); return false; }
+                double scalar = to_double(l);
+                auto result_ptr = std::make_shared<Array>();
+                result_ptr->shape = r->shape;
+                result_ptr->data.reserve(r->data.size());
+                for (const auto& elem : r->data) {
+                    double right_val = to_double(elem);
+                    bool result = false;
+                    switch (op) {
+                    case Tokens::ID::C_EQ: result = (scalar == right_val); break;
+                    case Tokens::ID::C_NE: result = (scalar != right_val); break;
+                    case Tokens::ID::C_LT: result = (scalar < right_val); break;
+                    case Tokens::ID::C_GT: result = (scalar > right_val); break;
+                    case Tokens::ID::C_LE: result = (scalar <= right_val); break;
+                    case Tokens::ID::C_GE: result = (scalar >= right_val); break;
+                    }
+                    result_ptr->data.push_back(result);
+                }
+                return result_ptr;
+            }
+
+            // --- EXISTING SCALAR COMPARISON LOGIC (Unchanged) ---
 
             // Check the type of the ORIGINAL variant objects.
-            if (std::holds_alternative<std::string>(left) || std::holds_alternative<std::string>(right)) {
+            else if (std::holds_alternative<std::string>(left) || std::holds_alternative<std::string>(right)) {
                 // If either is a string, we compare them as strings.
                 if (op == Tokens::ID::C_EQ) return to_string(l) == to_string(r);
                 if (op == Tokens::ID::C_NE) return to_string(l) != to_string(r);
