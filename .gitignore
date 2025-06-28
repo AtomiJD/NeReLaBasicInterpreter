@@ -365,4 +365,8 @@ FodyWeavers.xsd
 # Atomi Test Dateien
 Fluppi/
 
+# Old versions
 *_old.*
+
+# Experimental versions
+*_exp.*

@@ -20,6 +20,7 @@
 #include <sstream>
 #include <unordered_set>
 #include <cstdlib> 
+#include <format>
 
 
 #ifdef HTTP
@@ -937,8 +938,192 @@ BasicValue builtin_split(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result_ptr;
 }
 
+// FRMV$(array) -> string$
+// Formats a 1D or 2D array into a right-aligned string matrix.
+BasicValue builtin_frmv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. Argument Validation
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return std::string("");
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to FRMV$ must be an array.");
+        return std::string("");
+    }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) {
+        return std::string(""); // Nothing to format
+    }
 
-// --- Vector and Matrx functions
+    // 2. Determine Shape
+    size_t rows, cols;
+    if (arr_ptr->shape.size() == 1) {
+        rows = 1;
+        cols = arr_ptr->shape[0];
+    }
+    else if (arr_ptr->shape.size() == 2) {
+        rows = arr_ptr->shape[0];
+        cols = arr_ptr->shape[1];
+    }
+    else {
+        Error::set(15, vm.runtime_current_line, "FRMV$ only supports 1D or 2D arrays.");
+        return std::string("");
+    }
+
+    if (cols == 0) {
+        return std::string(""); // No columns to format
+    }
+
+    // 3. Calculate Maximum Width for Each Column
+    std::vector<size_t> col_widths(cols, 0);
+    for (size_t r = 0; r < rows; ++r) {
+        for (size_t c = 0; c < cols; ++c) {
+            std::string val_str = to_string(arr_ptr->data[r * cols + c]);
+            if (val_str.length() > col_widths[c]) {
+                col_widths[c] = val_str.length();
+            }
+        }
+    }
+
+    // 4. Build the Formatted String
+    std::stringstream ss;
+    for (size_t r = 0; r < rows; ++r) {
+        for (size_t c = 0; c < cols; ++c) {
+            ss << std::right << std::setw(col_widths[c]) << to_string(arr_ptr->data[r * cols + c]);
+            if (c < cols - 1) {
+                ss << " "; // Separator between columns
+            }
+        }
+        if (r < rows - 1) {
+            ss << "\n"; // Newline for the next row
+        }
+    }
+
+    return ss.str();
+}
+
+// In BuiltinFunctions.cpp
+
+// Replace the existing builtin_format_str with this corrected version.
+
+// FORMAT$(format_string$, arg1, arg2, ...) -> string$
+// Formats a string using C++20-style format specifiers.
+BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. Argument Validation
+    if (args.empty()) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return std::string("");
+    }
+
+    std::string format_string = to_string(args[0]);
+    std::vector<BasicValue> format_args;
+    if (args.size() > 1) {
+        format_args.assign(args.begin() + 1, args.end());
+    }
+
+    std::stringstream result;
+    size_t last_pos = 0;
+    size_t auto_index = 0;
+
+    // Manually iterate through the format string to handle each placeholder
+    while (last_pos < format_string.length()) {
+        size_t brace_pos = format_string.find('{', last_pos);
+
+        if (brace_pos == std::string::npos) {
+            result << format_string.substr(last_pos);
+            break;
+        }
+
+        result << format_string.substr(last_pos, brace_pos - last_pos);
+
+        if (brace_pos + 1 < format_string.length() && format_string[brace_pos + 1] == '{') {
+            result << '{';
+            last_pos = brace_pos + 2;
+            continue;
+        }
+
+        size_t end_brace = format_string.find('}', brace_pos + 1);
+        if (end_brace == std::string::npos) {
+            result << format_string.substr(brace_pos);
+            break;
+        }
+
+        std::string spec_content = format_string.substr(brace_pos + 1, end_brace - (brace_pos + 1));
+        size_t arg_index;
+        std::string format_specifier = "{}";
+
+        size_t colon_pos = spec_content.find(':');
+        std::string index_str = spec_content;
+
+        if (colon_pos != std::string::npos) {
+            index_str = spec_content.substr(0, colon_pos);
+            format_specifier = "{:" + spec_content.substr(colon_pos + 1) + "}";
+        }
+
+        if (index_str.empty()) {
+            arg_index = auto_index++;
+        }
+        else {
+            try {
+                arg_index = std::stoul(index_str);
+            }
+            catch (const std::exception&) {
+                result << "{" << spec_content << "}";
+                last_pos = end_brace + 1;
+                continue;
+            }
+        }
+
+        if (arg_index < format_args.size()) {
+            const BasicValue& arg = format_args[arg_index];
+            try {
+                result << std::visit([&](auto&& value) -> std::string {
+                    using T = std::decay_t<decltype(value)>;
+
+                    // --- START OF THE FIX ---
+                    if constexpr (std::is_same_v<T, double>) {
+                        // Check the format specifier to see if an integer type is requested.
+                        size_t spec_end_pos = format_specifier.length() - 1;
+                        if (spec_end_pos > 0 && format_specifier[spec_end_pos] == '}') {
+                            char type_char = format_specifier[spec_end_pos - 1];
+                            // Check for integer-only types: d, x, X, b, B, o, c
+                            if (std::string("dxXbo").find(type_char) != std::string::npos) {
+                                // It's an integer format. Cast the double to a long long.
+                                return std::vformat(format_specifier, std::make_format_args(static_cast<long long>(value)));
+                            }
+                            if (type_char == 'c') {
+                                // Handle character case
+                                return std::vformat(format_specifier, std::make_format_args(static_cast<char>(static_cast<long long>(value))));
+                            }
+                        }
+                        // If it's not an integer type, format as a double.
+                        return std::vformat(format_specifier, std::make_format_args(value));
+                    }
+                    // --- END OF THE FIX ---
+
+                    else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
+                        // These types are fine as they are
+                        return std::vformat(format_specifier, std::make_format_args(value));
+                    }
+                    else {
+                        // Fallback for complex types (Array, Map, etc.)
+                        return to_string(value);
+                    }
+                    }, arg);
+            }
+            catch (const std::format_error& e) {
+                result << "{FORMAT ERROR: " << e.what() << "}";
+            }
+        }
+        else {
+            result << "{" << spec_content << "}";
+        }
+        last_pos = end_brace + 1;
+    }
+    return result.str();
+}
+
+// --- Vector and Matrix functions
 
 // --- Array Reduction Functions ---
 
@@ -2007,6 +2192,50 @@ BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return static_cast<double>(rand()) / (RAND_MAX + 1.0);
 }
 
+// --- Arithmetic Functions ---
+
+// FAC(numeric_expression) -> number
+// Calculates the factorial of a non-negative integer.
+BasicValue builtin_fac(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. Validate the number of arguments.
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return 0.0;
+    }
+
+    // 2. Convert the input BasicValue to a number.
+    double n_double = to_double(args[0]);
+
+    // Factorial is only defined for integers. Check if the number has a fractional part.
+    if (n_double != std::floor(n_double)) {
+        Error::set(1, vm.runtime_current_line, "Argument to FAC must be an integer."); // Syntax error or illegal function call
+        return 0.0;
+    }
+
+    long long n = static_cast<long long>(n_double);
+
+    // 3. Validate the domain of the input.
+    if (n < 0) {
+        Error::set(1, vm.runtime_current_line, "Argument to FAC cannot be negative."); // Or a more specific error
+        return 0.0; // Factorial is not defined for negative numbers.
+    }
+
+    // Factorials grow very quickly. 20! is the largest that fits in a 64-bit integer.
+    // We calculate using 'double' to handle larger values up to ~170! before overflowing.
+    if (n > 170) {
+        Error::set(4, vm.runtime_current_line, "FAC argument too large, causes overflow."); // Overflow error
+        return 0.0;
+    }
+
+    // 4. Perform the calculation.
+    double result = 1.0;
+    for (long long i = 2; i <= n; ++i) {
+        result *= i;
+    }
+
+    return result;
+}
+
 // --- Date and Time Functions ---
 // 
 // TICK() -> returns milliseconds since the program started
@@ -2765,6 +2994,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
     register_func("SPLIT", 2, builtin_split);
+    register_func("FRMV$", 1, builtin_frmv_str);
+    register_func("FORMAT$", -1, builtin_format_str);
 
     // --- Register Math Functions ---
     register_func("SIN", 1, builtin_sin);
@@ -2772,6 +3003,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TAN", 1, builtin_tan);
     register_func("SQR", 1, builtin_sqr);
     register_func("RND", 1, builtin_rnd);
+    register_func("FAC", 1, builtin_fac);
 
     // --- Register APL-style Array Functions ---
     register_func("IOTA", 1, builtin_iota);
