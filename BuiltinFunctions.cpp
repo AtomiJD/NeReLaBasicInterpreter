@@ -747,6 +747,36 @@ BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false;
 }
 
+// TEXT x, y, content$, [r, g, b]
+// Draws a string on the graphics screen.
+BasicValue builtin_text(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // We need at least 3 arguments (x, y, content$)
+    // and can have up to 6 (x, y, content$, r, g, b)
+    if (args.size() < 3 || args.size() > 6) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+    std::string content = to_string(args[2]);
+
+    // Default color is white
+    Uint8 r = 255, g = 255, b = 255;
+
+    // If color arguments are provided, use them
+    if (args.size() == 6) {
+        r = static_cast<Uint8>(to_double(args[3]));
+        g = static_cast<Uint8>(to_double(args[4]));
+        b = static_cast<Uint8>(to_double(args[5]));
+    }
+
+    // Call the new method in our graphics system
+    vm.graphics_system.text(x, y, content, r, g, b);
+
+    return false; // Procedures return a dummy value
+}
+
 #endif
 
 
@@ -3057,6 +3087,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("LINE", -1, builtin_line);     
     register_proc("RECT", -1, builtin_rect);     
     register_proc("CIRCLE", -1, builtin_circle); 
+    register_proc("TEXT", -1, builtin_text);
 #endif
 #ifdef JDCOM
     register_func("CREATEOBJECT", 1, builtin_create_object);
