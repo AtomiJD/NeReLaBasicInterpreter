@@ -209,6 +209,28 @@ std::string to_string(const BasicValue& val) {
             size_t data_idx = 0;
             return array_to_string_recursive(*arg, data_idx, 0);
         }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Tensor>>) {
+            if (!arg) {
+                return "<Null Tensor>";
+            }
+            std::string tensor_str = "Tensor(";
+            // Recursively call to_string on the underlying data array
+            if (arg->data) {
+                // This will call the std::shared_ptr<Array> branch of this to_string function
+                tensor_str += to_string(BasicValue{ arg->data });
+            }
+            else {
+                tensor_str += "<Null Data>";
+            }
+            tensor_str += ")";
+
+            // Show the gradient's DATA, not the whole gradient tensor, to avoid potential recursion
+            if (arg->grad && arg->grad->data) {
+                tensor_str += "\n  .grad=";
+                tensor_str += to_string(BasicValue{ arg->grad->data });
+            }
+            return tensor_str;
+        }
 #ifdef JDCOM
         else if constexpr (std::is_same_v<T, ComObject>) { // This is the problematic part
             // For a ComObject, you typically can't get a meaningful string

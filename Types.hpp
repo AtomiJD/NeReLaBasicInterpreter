@@ -21,6 +21,7 @@
 struct Array;
 struct Map;
 struct JsonObject; 
+struct Tensor;
 
 // An enum to represent the declared type of a variable.
 enum class DataType {
@@ -110,9 +111,9 @@ struct JsonObject {
 
 // --- Use a std::shared_ptr to break the circular dependency ---    
 #ifdef JDCOM
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>>;
 #else
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>>;
 #endif
 
 
@@ -158,6 +159,21 @@ struct Array {
 struct Map {
     std::map<std::string, BasicValue> data;
 };
+
+using GradFunc = std::function<std::vector<std::shared_ptr<Tensor>>(std::shared_ptr<Tensor>)>;
+
+struct Tensor {
+    std::shared_ptr<Array> data; // The actual matrix/vector data
+    std::shared_ptr<Tensor> grad; // The gradient, also a Tensor
+
+    // --- For Autodiff ---
+    std::vector<std::shared_ptr<Tensor>> parents; // Tensors this one was created from
+    GradFunc backward_fn = nullptr; // The function to compute the gradient
+
+    // A flag to prevent re-computing gradients in complex graphs
+    bool has_been_processed = false;
+};
+
 
 //==============================================================================
 // HELPER FUNCTIONS

@@ -69,6 +69,7 @@ namespace {
         {"INTEGER", Tokens::ID::INT},
         {"DOUBLE",  Tokens::ID::DOUBLE},
         {"STRING",  Tokens::ID::STRTYPE},
+        {"TENSOR",  Tokens::ID::TENSOR},
         {"STOP",    Tokens::ID::STOP},    
         {"RESUME",  Tokens::ID::RESUME},  
         {"ON ERROR CALL", Tokens::ID::ONERRORCALL},

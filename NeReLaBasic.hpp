@@ -228,9 +228,11 @@ public:
     BasicValue parse_comparison();
     BasicValue parse_term();
     BasicValue parse_primary();
+    BasicValue parse_power();
     BasicValue parse_unary();
     BasicValue parse_factor();
     BasicValue parse_array_literal();
+    BasicValue parse_map_literal();
     bool compile_module(const std::string& module_name, const std::string& module_source_code);
     uint8_t tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source);
     void statement();
