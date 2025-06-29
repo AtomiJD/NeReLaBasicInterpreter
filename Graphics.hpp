@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include "SpriteSystem.hpp" 
 
 class Graphics {
 public:
@@ -31,10 +32,10 @@ public:
 
     std::string get_key_from_buffer();
 
-
-
     bool is_initialized = false;
     bool quit_event_received = false;
+
+    SpriteSystem sprite_system;
 
 private:
     SDL_Window* window = nullptr;

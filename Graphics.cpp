@@ -30,6 +30,9 @@ bool Graphics::init(const std::string& title, int width, int height) {
         return false;
     }
 
+    // Initialize the sprite system and pass it our renderer
+    sprite_system.init(renderer);
+
     font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 24);
     if (!font) {
         // Use TextIO for consistency, but also cerr for visibility during debugging
@@ -49,6 +52,9 @@ void Graphics::shutdown() {
     if (!is_initialized) return;
 
     SDL_StopTextInput(window);
+
+    // Shut down the sprite system first to free its textures
+    sprite_system.shutdown();
 
     if (font) {
         TTF_CloseFont(font);

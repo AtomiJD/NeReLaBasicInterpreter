@@ -903,6 +903,103 @@ BasicValue builtin_mouseb(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return vm.graphics_system.get_mouse_button_state(button_index);
 }
 
+// --- SPRITE PROCEDURES & FUNCTIONS ---
+
+// SPRITE.LOAD type_id, "filename.png"
+BasicValue builtin_sprite_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    int type_id = static_cast<int>(to_double(args[0]));
+    std::string filename = to_string(args[1]);
+
+    // The sprite system is a member of the graphics system
+    if (!vm.graphics_system.sprite_system.load_sprite_type(type_id, filename)) {
+        // The C++ function already prints a detailed error.
+        Error::set(1, vm.runtime_current_line, "Failed to load sprite.");
+    }
+    return false;
+}
+
+// SPRITE.CREATE(type_id, x, y) -> instance_id
+BasicValue builtin_sprite_create(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line);
+        return -1.0;
+    }
+    int type_id = static_cast<int>(to_double(args[0]));
+    float x = static_cast<float>(to_double(args[1]));
+    float y = static_cast<float>(to_double(args[2]));
+
+    int instance_id = vm.graphics_system.sprite_system.create_sprite(type_id, x, y);
+    return static_cast<double>(instance_id);
+}
+
+// SPRITE.MOVE instance_id, x, y
+BasicValue builtin_sprite_move(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return false; }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    float x = static_cast<float>(to_double(args[1]));
+    float y = static_cast<float>(to_double(args[2]));
+    vm.graphics_system.sprite_system.move_sprite(instance_id, x, y);
+    return false;
+}
+
+// SPRITE.SET_VELOCITY instance_id, vx, vy
+BasicValue builtin_sprite_set_velocity(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return false; }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    float vx = static_cast<float>(to_double(args[1]));
+    float vy = static_cast<float>(to_double(args[2]));
+    vm.graphics_system.sprite_system.set_velocity(instance_id, vx, vy);
+    return false;
+}
+
+// SPRITE.DELETE instance_id
+BasicValue builtin_sprite_delete(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    vm.graphics_system.sprite_system.delete_sprite(instance_id);
+    return false;
+}
+
+// SPRITE.UPDATE
+BasicValue builtin_sprite_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.sprite_system.update();
+    return false;
+}
+
+// SPRITE.DRAW_ALL
+BasicValue builtin_sprite_draw_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.sprite_system.draw_all();
+    return false;
+}
+
+// SPRITE.GET_X(instance_id) -> x_coordinate
+BasicValue builtin_sprite_get_x(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return 0.0; }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    return static_cast<double>(vm.graphics_system.sprite_system.get_x(instance_id));
+}
+
+// SPRITE.GET_Y(instance_id) -> y_coordinate
+BasicValue builtin_sprite_get_y(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return 0.0; }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    return static_cast<double>(vm.graphics_system.sprite_system.get_y(instance_id));
+}
+
+// SPRITE.COLLISION(id1, id2) -> boolean
+BasicValue builtin_sprite_collision(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return false; }
+    int id1 = static_cast<int>(to_double(args[0]));
+    int id2 = static_cast<int>(to_double(args[1]));
+    return vm.graphics_system.sprite_system.check_collision(id1, id2);
+}
+
 #endif
 
 
@@ -3233,6 +3330,20 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MOUSEX", 0, builtin_mousex);
     register_func("MOUSEY", 0, builtin_mousey);
     register_func("MOUSEB", 1, builtin_mouseb);
+
+    // Sprite Procedures
+    register_proc("SPRITE.LOAD", 2, builtin_sprite_load);
+    register_proc("SPRITE.MOVE", 3, builtin_sprite_move);
+    register_proc("SPRITE.SET_VELOCITY", 3, builtin_sprite_set_velocity);
+    register_proc("SPRITE.DELETE", 1, builtin_sprite_delete);
+    register_proc("SPRITE.UPDATE", 0, builtin_sprite_update);
+    register_proc("SPRITE.DRAW_ALL", 0, builtin_sprite_draw_all);
+
+    // Sprite Functions
+    register_func("SPRITE.CREATE", 3, builtin_sprite_create);
+    register_func("SPRITE.GET_X", 1, builtin_sprite_get_x);
+    register_func("SPRITE.GET_Y", 1, builtin_sprite_get_y);
+    register_func("SPRITE.COLLISION", 2, builtin_sprite_collision);
 
 #endif
 #ifdef JDCOM
