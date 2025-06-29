@@ -93,6 +93,8 @@ namespace Tokens {
         ONERRORCALL = 0x55,
         C_DOT = 0x56,
         C_CARET = 0x57,
+        EXIT_FOR = 0x58, 
+        EXIT_DO = 0x59,  
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

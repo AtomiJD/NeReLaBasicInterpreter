@@ -639,6 +639,17 @@ BasicValue builtin_len(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // --- SDL Integration ---
 
 #ifdef SDL3
+
+// This map is now defined directly in this file to resolve linker errors.
+const std::map<std::string, Waveform> waveform_map = {
+    {"SINE", Waveform::SINE},
+    {"SQUARE", Waveform::SQUARE},
+    {"SAW", Waveform::SAWTOOTH},
+    {"TRIANGLE", Waveform::TRIANGLE}
+};
+
+extern const std::map<std::string, Waveform> waveform_map;
+
 // SCREEN width, height, [title$]
 // Initializes the graphics screen.
 BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -747,6 +758,112 @@ BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false;
 }
 
+// TEXT x, y, content$, [r, g, b]
+// Draws a string on the graphics screen.
+BasicValue builtin_text(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // We need at least 3 arguments (x, y, content$)
+    // and can have up to 6 (x, y, content$, r, g, b)
+    if (args.size() < 3 || args.size() > 6) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+    std::string content = to_string(args[2]);
+
+    // Default color is white
+    Uint8 r = 255, g = 255, b = 255;
+
+    // If color arguments are provided, use them
+    if (args.size() == 6) {
+        r = static_cast<Uint8>(to_double(args[3]));
+        g = static_cast<Uint8>(to_double(args[4]));
+        b = static_cast<Uint8>(to_double(args[5]));
+    }
+
+    // Call the new method in our graphics system
+    vm.graphics_system.text(x, y, content, r, g, b);
+
+    return false; // Procedures return a dummy value
+}
+
+// --- SDL Sound Functions ---
+
+// SOUND.INIT
+// Initializes the sound system. Must be called before any other sound command.
+BasicValue builtin_sound_init(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        return false;
+    }
+    // Assumes `sound_system` is a member of your NeReLaBasic class `vm`
+    if (!vm.sound_system.init(8)) { // Initialize with 8 tracks
+        Error::set(1, vm.runtime_current_line, "Failed to initialize sound system.");
+    }
+    return false;
+}
+
+// SOUND.VOICE track, waveform$, attack, decay, sustain, release
+// Configures the sound of a specific track.
+BasicValue builtin_sound_voice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 6) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    int track = static_cast<int>(to_double(args[0]));
+    std::string waveform_str = to_upper(to_string(args[1]));
+    double attack = to_double(args[2]);
+    double decay = to_double(args[3]);
+    double sustain = to_double(args[4]);
+    double release = to_double(args[5]);
+
+    if (waveform_map.find(waveform_str) == waveform_map.end()) {
+        Error::set(1, vm.runtime_current_line, "Invalid waveform. Use SINE, SQUARE, SAW, or TRIANGLE.");
+        return false;
+    }
+    Waveform wave = waveform_map.at(waveform_str);
+
+    vm.sound_system.set_voice(track, wave, attack, decay, sustain, release);
+    return false;
+}
+
+// SOUND.PLAY track, frequency
+// Plays a note on a given track.
+BasicValue builtin_sound_play(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    int track = static_cast<int>(to_double(args[0]));
+    double freq = to_double(args[1]);
+    vm.sound_system.play_note(track, freq);
+    return false;
+}
+
+// SOUND.RELEASE track
+// Starts the release phase of a note on a given track.
+BasicValue builtin_sound_release(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    int track = static_cast<int>(to_double(args[0]));
+    vm.sound_system.release_note(track);
+    return false;
+}
+
+// SOUND.STOP track
+// Immediately silences a note on a given track.
+BasicValue builtin_sound_stop(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    int track = static_cast<int>(to_double(args[0]));
+    vm.sound_system.stop_note(track);
+    return false;
+}
 #endif
 
 
@@ -861,20 +978,29 @@ BasicValue builtin_instr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 }
 // INKEY$()
 BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    // This function takes no arguments
     if (!args.empty()) {
-        // Optional: Set an error for "Too many arguments"
-        return std::string(""); // Return empty string on error
+        Error::set(8, vm.runtime_current_line);
+        return std::string("");
     }
 
-    // _kbhit() checks if a key has been pressed without waiting.
+    // --- ADDED: Context-aware logic ---
+#ifdef SDL3
+    // If the graphics system is initialized, get input from SDL's event queue.
+    if (vm.graphics_system.is_initialized) {
+        // We need to process events to populate our buffer.
+        // The main execution loop already calls handle_events(),
+        // so we just need to read from our buffer here.
+        return vm.graphics_system.get_key_from_buffer();
+    }
+#endif
+
+    // --- Original console-based logic (fallback) ---
+    // If graphics are not active, use the old conio.h method.
     if (_kbhit()) {
-        // A key is waiting in the buffer. _getch() reads it without echoing to screen.
         char c = _getch();
-        return std::string(1, c); // Return a string containing the single character
+        return std::string(1, c);
     }
 
-    // No key was pressed, return an empty string.
     return std::string("");
 }
 
@@ -3057,6 +3183,13 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("LINE", -1, builtin_line);     
     register_proc("RECT", -1, builtin_rect);     
     register_proc("CIRCLE", -1, builtin_circle); 
+    register_proc("TEXT", -1, builtin_text);
+
+    register_proc("SOUND.INIT", 0, builtin_sound_init);
+    register_proc("SOUND.VOICE", 6, builtin_sound_voice);
+    register_proc("SOUND.PLAY", 2, builtin_sound_play);
+    register_proc("SOUND.RELEASE", 1, builtin_sound_release);
+    register_proc("SOUND.STOP", 1, builtin_sound_stop);
 #endif
 #ifdef JDCOM
     register_func("CREATEOBJECT", 1, builtin_create_object);

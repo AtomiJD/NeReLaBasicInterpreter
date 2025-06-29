@@ -425,6 +425,10 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
     bool is_start_of_statement = true;
     bool is_one_liner_if = false;
 
+    // This pointer will track if a LOOP statement was found on the current line,
+    // so we know to patch its jumps after the whole line is tokenized.
+    DoLoopInfo* loop_to_patch_ptr = nullptr;
+
     // Variables to track DO/LOOP specific state for the current line
     bool encountered_do_on_line = false;
     bool encountered_loop_on_line = false;
@@ -454,404 +458,474 @@ uint8_t NeReLaBasic::tokenize(const std::string& line, uint16_t lineNumber, std:
 
         // Use a switch for special compile-time tokens.
         switch (token) {
-            // --- Ignore IMPORT and MODULE keywords during this phase ---
-        case Tokens::ID::IMPORT:
-        case Tokens::ID::MODULE:
-            prgptr = lineinput.length(); // Skip the rest of the line
-            continue;
+                // --- Ignore IMPORT and MODULE keywords during this phase ---
+            case Tokens::ID::IMPORT:
+            case Tokens::ID::MODULE:
+                prgptr = lineinput.length(); // Skip the rest of the line
+                continue;
 
-            // Keywords that are ignored at compile-time (they are just markers).
-        case Tokens::ID::TO:
-        case Tokens::ID::STEP:
-            continue; // Do nothing, just consume the token.
+                // Keywords that are ignored at compile-time (they are just markers).
+            case Tokens::ID::TO:
+            case Tokens::ID::STEP:
+                continue; // Do nothing, just consume the token.
 
-            // A comment token means we ignore the rest of the line.
-        case Tokens::ID::REM:
-            prgptr = lineinput.length();
-            continue;
+                // A comment token means we ignore the rest of the line.
+            case Tokens::ID::REM:
+                prgptr = lineinput.length();
+                continue;
 
-            // A label stores the current bytecode address but isn't a token itself.
-        case Tokens::ID::LABEL:
-            label_addresses[buffer] = out_p_code.size();
-            continue;
+                // A label stores the current bytecode address but isn't a token itself.
+            case Tokens::ID::LABEL:
+                label_addresses[buffer] = out_p_code.size();
+                continue;
 
-            // Handle FUNC: parse the name, write a placeholder, and store the patch address.
-        case Tokens::ID::FUNC: {
-            parse(*this, is_start_of_statement); // Parse the next token, which is the function name.
-            FunctionInfo info;
-            info.name = to_upper(buffer);
-            info.is_exported = is_exported;
-            info.module_name = this->current_module_name;
+                // Handle FUNC: parse the name, write a placeholder, and store the patch address.
+            case Tokens::ID::FUNC: {
+                parse(*this, is_start_of_statement); // Parse the next token, which is the function name.
+                FunctionInfo info;
+                info.name = to_upper(buffer);
+                info.is_exported = is_exported;
+                info.module_name = this->current_module_name;
 
-            // Find parentheses to get parameter string
-            size_t open_paren = line.find('(', prgptr);
-            size_t close_paren = line.rfind(')');
-            if (open_paren != std::string::npos && close_paren != std::string::npos) {
-                auto trim = [](std::string& s) {
-                    s.erase(0, s.find_first_not_of(" \t\n\r"));
-                    s.erase(s.find_last_not_of(" \t\n\r") + 1);
-                    };
-                std::string params_str = line.substr(open_paren + 1, close_paren - (open_paren + 1));
-                std::stringstream pss(params_str);
-                std::string param;
-                while (std::getline(pss, param, ',')) {
-                    trim(param);
-                    if (param.length() > 2 && param.substr(param.length() - 2) == "[]") {
-                        param.resize(param.length() - 2);
+                // Find parentheses to get parameter string
+                size_t open_paren = line.find('(', prgptr);
+                size_t close_paren = line.rfind(')');
+                if (open_paren != std::string::npos && close_paren != std::string::npos) {
+                    auto trim = [](std::string& s) {
+                        s.erase(0, s.find_first_not_of(" \t\n\r"));
+                        s.erase(s.find_last_not_of(" \t\n\r") + 1);
+                        };
+                    std::string params_str = line.substr(open_paren + 1, close_paren - (open_paren + 1));
+                    std::stringstream pss(params_str);
+                    std::string param;
+                    while (std::getline(pss, param, ',')) {
+                        trim(param);
+                        if (param.length() > 2 && param.substr(param.length() - 2) == "[]") {
+                            param.resize(param.length() - 2);
+                        }
+                        if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                     }
-                    if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                 }
+
+                info.arity = info.parameter_names.size();
+                info.start_pcode = out_p_code.size() + 3; // +3 for FUNC token and 2-byte address
+                compilation_func_table[info.name] = info;
+
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                func_stack.push_back(out_p_code.size()); // Store address of the placeholder
+                out_p_code.push_back(0); // Placeholder byte 1
+                out_p_code.push_back(0); // Placeholder byte 2
+                prgptr = lineinput.length(); // The rest of the line is params, so we consume it.
+                continue;
             }
 
-            info.arity = info.parameter_names.size();
-            info.start_pcode = out_p_code.size() + 3; // +3 for FUNC token and 2-byte address
-            compilation_func_table[info.name] = info;
-
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            func_stack.push_back(out_p_code.size()); // Store address of the placeholder
-            out_p_code.push_back(0); // Placeholder byte 1
-            out_p_code.push_back(0); // Placeholder byte 2
-            prgptr = lineinput.length(); // The rest of the line is params, so we consume it.
-            continue;
-        }
-
-                             // Handle ENDFUNC: pop the stored address and patch the jump offset.
-        case Tokens::ID::ENDFUNC: {
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            if (!func_stack.empty()) {
-                uint16_t func_jump_addr = func_stack.back();
-                func_stack.pop_back();
-                uint16_t jump_target = out_p_code.size();
-                out_p_code[func_jump_addr] = jump_target & 0xFF;
-                out_p_code[func_jump_addr + 1] = (jump_target >> 8) & 0xFF;
+                                 // Handle ENDFUNC: pop the stored address and patch the jump offset.
+            case Tokens::ID::ENDFUNC: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                if (!func_stack.empty()) {
+                    uint16_t func_jump_addr = func_stack.back();
+                    func_stack.pop_back();
+                    uint16_t jump_target = out_p_code.size();
+                    out_p_code[func_jump_addr] = jump_target & 0xFF;
+                    out_p_code[func_jump_addr + 1] = (jump_target >> 8) & 0xFF;
+                }
+                continue;
             }
-            continue;
-        }
-        case Tokens::ID::SUB: {
-            // The 'SUB' token has been consumed. The next token must be the name.
-            parse(*this, is_start_of_statement);
-            FunctionInfo info;
-            info.name = to_upper(buffer);
-            info.is_procedure = true;
-            info.is_exported = is_exported; // Set the exported status!
-            info.module_name = this->current_module_name;
+            case Tokens::ID::SUB: {
+                // The 'SUB' token has been consumed. The next token must be the name.
+                parse(*this, is_start_of_statement);
+                FunctionInfo info;
+                info.name = to_upper(buffer);
+                info.is_procedure = true;
+                info.is_exported = is_exported; // Set the exported status!
+                info.module_name = this->current_module_name;
 
-            size_t open_paren = line.find('(', prgptr);
-            size_t close_paren = line.rfind(')');
-            if (open_paren != std::string::npos && close_paren != std::string::npos) {
-                auto trim = [](std::string& s) {
-                    s.erase(0, s.find_first_not_of(" \t\n\r"));
-                    s.erase(s.find_last_not_of(" \t\n\r") + 1);
-                    };
-                std::string params_str = line.substr(open_paren + 1, close_paren - (open_paren + 1));
-                std::stringstream pss(params_str);
-                std::string param;
-                while (std::getline(pss, param, ',')) {
-                    trim(param);
-                    if (param.length() > 2 && param.substr(param.length() - 2) == "[]") {
-                        param.resize(param.length() - 2);
+                size_t open_paren = line.find('(', prgptr);
+                size_t close_paren = line.rfind(')');
+                if (open_paren != std::string::npos && close_paren != std::string::npos) {
+                    auto trim = [](std::string& s) {
+                        s.erase(0, s.find_first_not_of(" \t\n\r"));
+                        s.erase(s.find_last_not_of(" \t\n\r") + 1);
+                        };
+                    std::string params_str = line.substr(open_paren + 1, close_paren - (open_paren + 1));
+                    std::stringstream pss(params_str);
+                    std::string param;
+                    while (std::getline(pss, param, ',')) {
+                        trim(param);
+                        if (param.length() > 2 && param.substr(param.length() - 2) == "[]") {
+                            param.resize(param.length() - 2);
+                        }
+                        if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                     }
-                    if (!param.empty()) info.parameter_names.push_back(to_upper(param));
                 }
+                else {
+                    Error::set(1, current_source_line);
+                }
+
+                info.arity = info.parameter_names.size();
+                info.start_pcode = out_p_code.size() + 3; // +3 for SUB token and 2-byte address
+                compilation_func_table[info.name] = info;
+
+                // Write the SUB token and its placeholder jump address
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                func_stack.push_back(out_p_code.size());
+                out_p_code.push_back(0); // Placeholder byte 1
+                out_p_code.push_back(0); // Placeholder byte 2
+
+                // We have processed the entire line.
+                prgptr = lineinput.length();
+                continue;
             }
-            else {
-                Error::set(1, current_source_line);
+            case Tokens::ID::ENDSUB: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                if (!func_stack.empty()) {
+                    uint16_t func_jump_addr = func_stack.back();
+                    func_stack.pop_back();
+                    uint16_t jump_target = out_p_code.size();
+                    out_p_code[func_jump_addr] = jump_target & 0xFF;
+                    out_p_code[func_jump_addr + 1] = (jump_target >> 8) & 0xFF;
+                }
+                continue;
             }
+            case Tokens::ID::CALLSUB: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                for (char c : buffer) out_p_code.push_back(c);
+                out_p_code.push_back(0); // Write the procedure name string
+                // Arguments that follow will be tokenized normally.
+                continue;
+            }
+            case Tokens::ID::GOTO: {
+                // Write the GOTO command token itself
+                out_p_code.push_back(static_cast<uint8_t>(token));
 
-            info.arity = info.parameter_names.size();
-            info.start_pcode = out_p_code.size() + 3; // +3 for SUB token and 2-byte address
-            compilation_func_table[info.name] = info;
+                // Immediately parse the next token on the line, which should be the label name
+                Tokens::ID label_name_token = parse(*this, is_start_of_statement);
 
-            // Write the SUB token and its placeholder jump address
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            func_stack.push_back(out_p_code.size());
-            out_p_code.push_back(0); // Placeholder byte 1
-            out_p_code.push_back(0); // Placeholder byte 2
+                // Check if we got a valid identifier for the label
+                if (label_name_token == Tokens::ID::VARIANT || label_name_token == Tokens::ID::INT) {
+                    // The buffer now holds the label name, so write IT to the bytecode
+                    for (char c : buffer) {
+                        out_p_code.push_back(c);
+                    }
+                    out_p_code.push_back(0); // Null terminator
+                }
+                else {
+                    // This is an error, e.g., "GOTO 123" or "GOTO +"
+                    Error::set(1, runtime_current_line); // Syntax Error
+                }
+                // We have now processed GOTO and its argument, so restart the main loop
+                continue;
+            }
+            case Tokens::ID::IF: {
+                // Write the IF token, then leave a 2-byte placeholder for the jump address.
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                if_stack.push_back({ (uint16_t)out_p_code.size(), current_source_line }); // Save address of the placeholder
+                out_p_code.push_back(0); // Placeholder byte 1
+                out_p_code.push_back(0); // Placeholder byte 2
+                break; // The expression after IF will be tokenized next
+            }
+            case Tokens::ID::THEN: {
+                // This is the key decision point. We look ahead without consuming tokens.
+                size_t peek_ptr = prgptr;
+                while (peek_ptr < lineinput.length() && StringUtils::isspace(lineinput[peek_ptr])) {
+                    peek_ptr++;
+                }
+                // If nothing but a comment or whitespace follows THEN, it's a block IF.
+                // Otherwise, it's a single-line IF.
+                if (peek_ptr < lineinput.length() && lineinput[peek_ptr] != '\'') {
+                    is_one_liner_if = true;
+                }
+                // We never write the THEN token to bytecode, so we just continue.
+                continue;
+            }
+            case Tokens::ID::ELSE: {
+                // A single-line IF cannot have an ELSE clause.
+                if (is_one_liner_if) {
+                    Error::set(1, current_source_line); // Syntax Error
+                    continue; // Stop processing this token
+                }
+                // Pop the IF's placeholder address from the stack.
+                IfStackInfo if_info = if_stack.back();
+                if_stack.pop_back();
 
-            // We have processed the entire line.
-            prgptr = lineinput.length();
-            continue;
-        }
-        case Tokens::ID::ENDSUB: {
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            if (!func_stack.empty()) {
-                uint16_t func_jump_addr = func_stack.back();
-                func_stack.pop_back();
+                // Now, write the ELSE token and its own placeholder for jumping past the ELSE block.
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                if_stack.push_back({ (uint16_t)out_p_code.size(), current_source_line }); // Push address of ELSE's placeholder
+                out_p_code.push_back(0); // Placeholder byte 1
+                out_p_code.push_back(0); // Placeholder byte 2
+                //prgptr = lineinput.length(); 
+
+                // Go back and patch the original IF's jump to point to the instruction AFTER the ELSE's placeholder.
                 uint16_t jump_target = out_p_code.size();
-                out_p_code[func_jump_addr] = jump_target & 0xFF;
-                out_p_code[func_jump_addr + 1] = (jump_target >> 8) & 0xFF;
+                out_p_code[if_info.patch_address] = jump_target & 0xFF;
+                out_p_code[if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+                continue;
             }
-            continue;
-        }
-        case Tokens::ID::CALLSUB: {
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            for (char c : buffer) out_p_code.push_back(c);
-            out_p_code.push_back(0); // Write the procedure name string
-            // Arguments that follow will be tokenized normally.
-            continue;
-        }
-        case Tokens::ID::GOTO: {
-            // Write the GOTO command token itself
-            out_p_code.push_back(static_cast<uint8_t>(token));
+            case Tokens::ID::ENDIF: {
+                // A single-line IF does not use an explicit ENDIF.
+                if (is_one_liner_if) {
+                    Error::set(1, current_source_line); // Syntax Error
+                    continue; // Stop processing this token
+                }
+                // Pop the corresponding IF or ELSE placeholder address from the stack.
+                IfStackInfo last_if_info = if_stack.back();
+                if_stack.pop_back();
 
-            // Immediately parse the next token on the line, which should be the label name
-            Tokens::ID label_name_token = parse(*this, is_start_of_statement);
+                // Patch it to point to the current location.
+                uint16_t jump_target = out_p_code.size();
+                out_p_code[last_if_info.patch_address] = jump_target & 0xFF;
+                out_p_code[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
 
-            // Check if we got a valid identifier for the label
-            if (label_name_token == Tokens::ID::VARIANT || label_name_token == Tokens::ID::INT) {
-                // The buffer now holds the label name, so write IT to the bytecode
+                // Don't write the ENDIF token, it's a compile-time marker.
+                continue;
+            }
+            case Tokens::ID::CALLFUNC: {
+                // The buffer holds the function name (e.g., "lall").
+                // Write the CALLFUNC token, then write the function name string.
+                out_p_code.push_back(static_cast<uint8_t>(token));
                 for (char c : buffer) {
                     out_p_code.push_back(c);
                 }
                 out_p_code.push_back(0); // Null terminator
-            }
-            else {
-                // This is an error, e.g., "GOTO 123" or "GOTO +"
-                Error::set(1, runtime_current_line); // Syntax Error
-            }
-            // We have now processed GOTO and its argument, so restart the main loop
-            continue;
-        }
-        case Tokens::ID::IF: {
-            // Write the IF token, then leave a 2-byte placeholder for the jump address.
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            if_stack.push_back({ (uint16_t)out_p_code.size(), current_source_line }); // Save address of the placeholder
-            out_p_code.push_back(0); // Placeholder byte 1
-            out_p_code.push_back(0); // Placeholder byte 2
-            break; // The expression after IF will be tokenized next
-        }
-        case Tokens::ID::THEN: {
-            // This is the key decision point. We look ahead without consuming tokens.
-            size_t peek_ptr = prgptr;
-            while (peek_ptr < lineinput.length() && StringUtils::isspace(lineinput[peek_ptr])) {
-                peek_ptr++;
-            }
-            // If nothing but a comment or whitespace follows THEN, it's a block IF.
-            // Otherwise, it's a single-line IF.
-            if (peek_ptr < lineinput.length() && lineinput[peek_ptr] != '\'') {
-                is_one_liner_if = true;
-            }
-            // We never write the THEN token to bytecode, so we just continue.
-            continue;
-        }
-        case Tokens::ID::ELSE: {
-            // A single-line IF cannot have an ELSE clause.
-            if (is_one_liner_if) {
-                Error::set(1, current_source_line); // Syntax Error
-                continue; // Stop processing this token
-            }
-            // Pop the IF's placeholder address from the stack.
-            IfStackInfo if_info = if_stack.back();
-            if_stack.pop_back();
 
-            // Now, write the ELSE token and its own placeholder for jumping past the ELSE block.
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            if_stack.push_back({ (uint16_t)out_p_code.size(), current_source_line }); // Push address of ELSE's placeholder
-            out_p_code.push_back(0); // Placeholder byte 1
-            out_p_code.push_back(0); // Placeholder byte 2
-            //prgptr = lineinput.length(); 
-
-            // Go back and patch the original IF's jump to point to the instruction AFTER the ELSE's placeholder.
-            uint16_t jump_target = out_p_code.size();
-            out_p_code[if_info.patch_address] = jump_target & 0xFF;
-            out_p_code[if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
-            continue;
-        }
-        case Tokens::ID::ENDIF: {
-            // A single-line IF does not use an explicit ENDIF.
-            if (is_one_liner_if) {
-                Error::set(1, current_source_line); // Syntax Error
-                continue; // Stop processing this token
+                // The arguments inside (...) will be tokenized as a normal expression
+                // by subsequent loops, which is what the evaluator expects.
+                continue;
             }
-            // Pop the corresponding IF or ELSE placeholder address from the stack.
-            IfStackInfo last_if_info = if_stack.back();
-            if_stack.pop_back();
-
-            // Patch it to point to the current location.
-            uint16_t jump_target = out_p_code.size();
-            out_p_code[last_if_info.patch_address] = jump_target & 0xFF;
-            out_p_code[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
-
-            // Don't write the ENDIF token, it's a compile-time marker.
-            continue;
-        }
-        case Tokens::ID::CALLFUNC: {
-            // The buffer holds the function name (e.g., "lall").
-            // Write the CALLFUNC token, then write the function name string.
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            for (char c : buffer) {
-                out_p_code.push_back(c);
-            }
-            out_p_code.push_back(0); // Null terminator
-
-            // The arguments inside (...) will be tokenized as a normal expression
-            // by subsequent loops, which is what the evaluator expects.
-            continue;
-        }
-        case Tokens::ID::ONERRORCALL: {
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            parse(*this, is_start_of_statement); // Parse the next token which is the function name
-            for (char c : buffer) out_p_code.push_back(c);
-            out_p_code.push_back(0); // Null terminator for the function name
-            prgptr = lineinput.length(); // Consume rest of the line as it's just the function name
-            continue;
-        }
-        case Tokens::ID::RESUME: { // Handle RESUME arguments during tokenization
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            // Peek to see if RESUME is followed by NEXT or a string (label)
-            size_t original_prgptr = prgptr; // Save for lookahead
-            Tokens::ID next_arg_token = parse(*this, false); // Parse without consuming
-            prgptr = original_prgptr; // Reset prgptr
-
-            if (next_arg_token == Tokens::ID::NEXT) {
-                parse(*this, false); // Consume NEXT
-                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NEXT));
-            }
-            else if (next_arg_token == Tokens::ID::STRING) {
-                parse(*this, false); // Consume STRING
-                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::STRING));
+            case Tokens::ID::ONERRORCALL: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                parse(*this, is_start_of_statement); // Parse the next token which is the function name
                 for (char c : buffer) out_p_code.push_back(c);
-                out_p_code.push_back(0); // Null terminator
+                out_p_code.push_back(0); // Null terminator for the function name
+                prgptr = lineinput.length(); // Consume rest of the line as it's just the function name
+                continue;
             }
-            // If no argument (simple RESUME), nothing more needs to be written to pcode.
-            continue;
-        }
-        case Tokens::ID::DO: {
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            DoLoopInfo info;
-            info.source_line = lineNumber;
-            info.loop_start_pcode_addr = out_p_code.size() - 1; // Start of loop body (after DO token)
+            case Tokens::ID::RESUME: { // Handle RESUME arguments during tokenization
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                // Peek to see if RESUME is followed by NEXT or a string (label)
+                size_t original_prgptr = prgptr; // Save for lookahead
+                Tokens::ID next_arg_token = parse(*this, false); // Parse without consuming
+                prgptr = original_prgptr; // Reset prgptr
 
-            // Peek for WHILE/UNTIL condition after DO
-            size_t original_prgptr_before_peek = prgptr;
-            Tokens::ID next_token_peek = parse(*this, false);
-            prgptr = original_prgptr_before_peek; // Reset
-
-            if (next_token_peek == Tokens::ID::WHILE || next_token_peek == Tokens::ID::UNTIL) {
-                info.is_pre_test = true;
-                info.condition_type = next_token_peek;
-
-                // Write the WHILE/UNTIL token (for runtime to evaluate condition)
-                out_p_code.push_back(static_cast<uint8_t>(next_token_peek));
-                parse(*this, false); // Consume WHILE/UNTIL keyword
-
-                // Write 2-byte placeholder for jump-past-loop.
-                // This will be patched by the corresponding LOOP.
-                info.condition_pcode_addr = out_p_code.size(); // Address of this placeholder 
-                out_p_code.push_back(0); // Placeholder byte 1 (LSB)
-                out_p_code.push_back(0); // Placeholder byte 2 (MSB)
-
-                do_loop_stack.push_back(info);
+                if (next_arg_token == Tokens::ID::NEXT) {
+                    parse(*this, false); // Consume NEXT
+                    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NEXT));
+                }
+                else if (next_arg_token == Tokens::ID::STRING) {
+                    parse(*this, false); // Consume STRING
+                    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::STRING));
+                    for (char c : buffer) out_p_code.push_back(c);
+                    out_p_code.push_back(0); // Null terminator
+                }
+                // If no argument (simple RESUME), nothing more needs to be written to pcode.
+                continue;
             }
-            else {
-                // Simple DO loop (no condition or post-test condition)
-                info.is_pre_test = false;
-                info.condition_type = Tokens::ID::NOCMD;
-                info.condition_pcode_addr = 0; // Not applicable for this type of DO
+            case Tokens::ID::DO: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                DoLoopInfo info;
+                info.source_line = lineNumber;
+                info.loop_start_pcode_addr = out_p_code.size() - 1; // Start of loop body (after DO token)
 
-                do_loop_stack.push_back(info);
+                // Peek for WHILE/UNTIL condition after DO
+                size_t original_prgptr_before_peek = prgptr;
+                Tokens::ID next_token_peek = parse(*this, false);
+                prgptr = original_prgptr_before_peek; // Reset
+
+                if (next_token_peek == Tokens::ID::WHILE || next_token_peek == Tokens::ID::UNTIL) {
+                    info.is_pre_test = true;
+                    info.condition_type = next_token_peek;
+
+                    // Write the WHILE/UNTIL token (for runtime to evaluate condition)
+                    out_p_code.push_back(static_cast<uint8_t>(next_token_peek));
+                    parse(*this, false); // Consume WHILE/UNTIL keyword
+
+                    // Write 2-byte placeholder for jump-past-loop.
+                    // This will be patched by the corresponding LOOP.
+                    info.condition_pcode_addr = out_p_code.size(); // Address of this placeholder 
+                    out_p_code.push_back(0); // Placeholder byte 1 (LSB)
+                    out_p_code.push_back(0); // Placeholder byte 2 (MSB)
+
+                    do_loop_stack.push_back(info);
+                }
+                else {
+                    // Simple DO loop (no condition or post-test condition)
+                    info.is_pre_test = false;
+                    info.condition_type = Tokens::ID::NOCMD;
+                    info.condition_pcode_addr = 0; // Not applicable for this type of DO
+
+                    do_loop_stack.push_back(info);
+                }
+                continue;
             }
-            continue;
-        }
 
-        case Tokens::ID::LOOP: {
-            // First, write the LOOP token.
-            out_p_code.push_back(static_cast<uint8_t>(token));
+            case Tokens::ID::LOOP: {
+                // First, write the LOOP token.
+                out_p_code.push_back(static_cast<uint8_t>(token));
 
-            if (do_loop_stack.empty()) {
-                Error::set(14, lineNumber); // Unclosed loop / LOOP without DO
-                return 1;
-            }
-            DoLoopInfo current_do_loop_info = do_loop_stack.back();
-            do_loop_stack.pop_back();
+                // Set the pointer to the loop on the stack that needs patching later.
+                loop_to_patch_ptr = &do_loop_stack.back();
 
-            // Peek for WHILE/UNTIL after LOOP
-            size_t original_prgptr_before_peek = prgptr;
-            Tokens::ID next_token_peek = parse(*this, false);
-            prgptr = original_prgptr_before_peek; // Reset
-
-            if (next_token_peek == Tokens::ID::WHILE || next_token_peek == Tokens::ID::UNTIL) {
-                // This is a post-test loop.
-                if (current_do_loop_info.is_pre_test) {
-                    Error::set(1, lineNumber); // Syntax Error: Condition on both DO and LOOP
+                if (do_loop_stack.empty()) {
+                    Error::set(14, lineNumber); // Unclosed loop / LOOP without DO
                     return 1;
                 }
-                current_do_loop_info.is_pre_test = false; // Confirm it's post-test
-                current_do_loop_info.condition_type = next_token_peek;
+                DoLoopInfo current_do_loop_info = do_loop_stack.back();
+                // ! do_loop_stack.pop_back();
 
-                // Write the WHILE/UNTIL token (for runtime to evaluate condition)
-                out_p_code.push_back(static_cast<uint8_t>(next_token_peek));
-                parse(*this, false); // Consume WHILE/UNTIL keyword
-            }
-            // If no condition, condition_type remains NOCMD.
+                // Peek for WHILE/UNTIL after LOOP
+                size_t original_prgptr_before_peek = prgptr;
+                Tokens::ID next_token_peek = parse(*this, false);
+                prgptr = original_prgptr_before_peek; // Reset
 
-            // Write the loop metadata for runtime (is_pre_test, condition_type, loop_start_pcode_addr)
-            out_p_code.push_back(static_cast<uint8_t>(current_do_loop_info.is_pre_test));
-            out_p_code.push_back(static_cast<uint8_t>(current_do_loop_info.condition_type)); // This will be NOCMD if no explicit condition
-            out_p_code.push_back(current_do_loop_info.loop_start_pcode_addr & 0xFF);
-            out_p_code.push_back((current_do_loop_info.loop_start_pcode_addr >> 8) & 0xFF);
+                if (next_token_peek == Tokens::ID::WHILE || next_token_peek == Tokens::ID::UNTIL) {
+                    // This is a post-test loop.
+                    if (current_do_loop_info.is_pre_test) {
+                        Error::set(1, lineNumber); // Syntax Error: Condition on both DO and LOOP
+                        return 1;
+                    }
+                    current_do_loop_info.is_pre_test = false; // Confirm it's post-test
+                    current_do_loop_info.condition_type = next_token_peek;
 
-            // *** CRITICAL PATCHING STEP ***
-            // If this was a pre-test loop (DO WHILE/UNTIL), its placeholder for jumping *past* the loop
-            // needs to be patched *now* to point to the instruction *after* the LOOP statement.
-            if (current_do_loop_info.is_pre_test && current_do_loop_info.condition_pcode_addr != 0) {
+                    // Write the WHILE/UNTIL token (for runtime to evaluate condition)
+                    out_p_code.push_back(static_cast<uint8_t>(next_token_peek));
+                    parse(*this, false); // Consume WHILE/UNTIL keyword
+                }
+                // If no condition, condition_type remains NOCMD.
+
+                // Write the loop metadata for runtime (is_pre_test, condition_type, loop_start_pcode_addr)
+                out_p_code.push_back(static_cast<uint8_t>(current_do_loop_info.is_pre_test));
+                out_p_code.push_back(static_cast<uint8_t>(current_do_loop_info.condition_type)); // This will be NOCMD if no explicit condition
+                out_p_code.push_back(current_do_loop_info.loop_start_pcode_addr & 0xFF);
+                out_p_code.push_back((current_do_loop_info.loop_start_pcode_addr >> 8) & 0xFF);
+
                 uint16_t jump_target = out_p_code.size(); // The address immediately after this LOOP
-                out_p_code[current_do_loop_info.condition_pcode_addr] = jump_target & 0xFF;
-                out_p_code[current_do_loop_info.condition_pcode_addr + 1] = (jump_target >> 8) & 0xFF;
+                // *** CRITICAL PATCHING STEP ***
+                // If this was a pre-test loop (DO WHILE/UNTIL), its placeholder for jumping *past* the loop
+                // needs to be patched *now* to point to the instruction *after* the LOOP statement.
+                if (current_do_loop_info.is_pre_test && current_do_loop_info.condition_pcode_addr != 0) {
+                    out_p_code[current_do_loop_info.condition_pcode_addr] = jump_target & 0xFF;
+                    out_p_code[current_do_loop_info.condition_pcode_addr + 1] = (jump_target >> 8) & 0xFF;
+                }
+
+                continue;
             }
-            continue;
-        }
-        case Tokens::ID::WHILE:
-        case Tokens::ID::UNTIL:
-            // These tokens are only consumed if they directly follow DO or LOOP.
-            // If they appear elsewhere, it's a syntax error or part of an expression.
-            // The `parse` method should return these as keywords if encountered standalone.
-            // For DO/LOOP, they are handled in the DO/LOOP cases above.
-            // If this is reached, it means WHILE/UNTIL is not correctly placed.
-            // However, they *can* be part of an expression (e.g. `IF x WHILE y THEN`).
-            // To clarify, this assumes they are *only* used with DO/LOOP.
-            // If used in expressions, this case will require further logic.
-            // For now, let's assume they are handled by their parent DO/LOOP.
-            // If they appear here, it implies a syntax error.
-            Error::set(1, lineNumber); // Syntax Error: WHILE/UNTIL out of place
-            return 1;
-
-        case Tokens::ID::NEXT: {
-            // Write the NEXT token to the P-Code. This is all the runtime needs.
-            out_p_code.push_back(static_cast<uint8_t>(token));
-
-            // Now, parse the variable name that follows ("i") to advance the
-            // parsing pointer, but we will discard the result.
-            parse(*this, is_start_of_statement);
-
-            // We have now processed the entire "next i" statement.
-            // Continue to the next token on the line (if any).
-            continue;
-
-        case Tokens::ID::AS:
-            // This is a keyword we need at runtime for DIM.
-            // Write the token to the bytecode stream.
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            continue; // Continue to the next token
-        }
-        default: {
-            out_p_code.push_back(static_cast<uint8_t>(token));
-            if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT ||
-                token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS || token == Tokens::ID::MAP_ACCESS ||
-                token == Tokens::ID::CALLFUNC || token == Tokens::ID::CONSTANT || token == Tokens::ID::STRVAR)
-            {
-                for (char c : buffer) out_p_code.push_back(c);
+            // CASES FOR EXIT ---
+            case Tokens::ID::EXIT_FOR: {
+                if (compiler_for_stack.empty()) {
+                    Error::set(1, lineNumber, "EXITFOR without FOR.");
+                    return 1;
+                }
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                compiler_for_stack.back().exit_patch_locations.push_back(out_p_code.size());
                 out_p_code.push_back(0);
+                out_p_code.push_back(0);
+                continue;
             }
-            else if (token == Tokens::ID::NUMBER) {
-                double value = std::stod(buffer);
-                uint8_t double_bytes[sizeof(double)];
-                memcpy(double_bytes, &value, sizeof(double));
-                out_p_code.insert(out_p_code.end(), double_bytes, double_bytes + sizeof(double));
+            case Tokens::ID::EXIT_DO: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                // Add current location to the patch list for the current DO loop
+                do_loop_stack.back().exit_patch_locations.push_back(out_p_code.size());
+                // Write a 2-byte placeholder
+                out_p_code.push_back(0);
+                out_p_code.push_back(0);
+                continue;
             }
-        }
-        }
+            case Tokens::ID::FOR: {
+                // Push a new loop info struct onto the *compiler* stack.
+                compiler_for_stack.push_back({ lineNumber });
+                // Write the FOR token, the rest is handled by the expression parser at runtime.
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                break;
+            }
+
+            case Tokens::ID::WHILE:
+            case Tokens::ID::UNTIL:
+                // These tokens are only consumed if they directly follow DO or LOOP.
+                // If they appear elsewhere, it's a syntax error or part of an expression.
+                // The `parse` method should return these as keywords if encountered standalone.
+                // For DO/LOOP, they are handled in the DO/LOOP cases above.
+                // If this is reached, it means WHILE/UNTIL is not correctly placed.
+                // However, they *can* be part of an expression (e.g. `IF x WHILE y THEN`).
+                // To clarify, this assumes they are *only* used with DO/LOOP.
+                // If used in expressions, this case will require further logic.
+                // For now, let's assume they are handled by their parent DO/LOOP.
+                // If they appear here, it implies a syntax error.
+                Error::set(1, lineNumber); // Syntax Error: WHILE/UNTIL out of place
+                return 1;
+
+            case Tokens::ID::NEXT: {
+                if (compiler_for_stack.empty()) {
+                    Error::set(21, lineNumber, "NEXT without FOR.");
+                    return 1;
+                }
+                CompilerForLoopInfo& loop_info = compiler_for_stack.back();
+
+                // First, write the NEXT token to the bytecode.
+                out_p_code.push_back(static_cast<uint8_t>(token));
+
+                // Now, get the address AFTER the NEXT token. This is the correct jump target for EXITFOR.
+                uint16_t exit_jump_target = out_p_code.size();
+
+                // Patch all pending EXIT FOR locations for this loop to jump past the NEXT command.
+                for (uint16_t patch_addr : loop_info.exit_patch_locations) {
+                    out_p_code[patch_addr] = exit_jump_target & 0xFF;
+                    out_p_code[patch_addr + 1] = (exit_jump_target >> 8) & 0xFF;
+                }
+
+                compiler_for_stack.pop_back();
+
+                // Consume the variable name after NEXT from the source line, as it's not needed in bytecode.
+                parse(*this, is_start_of_statement);
+                continue;
+            }
+
+            case Tokens::ID::AS:
+                // This is a keyword we need at runtime for DIM.
+                // Write the token to the bytecode stream.
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                continue; // Continue to the next token
+            
+            default: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT ||
+                    token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS || token == Tokens::ID::MAP_ACCESS ||
+                    token == Tokens::ID::CALLFUNC || token == Tokens::ID::CONSTANT || token == Tokens::ID::STRVAR)
+                {
+                    for (char c : buffer) out_p_code.push_back(c);
+                    out_p_code.push_back(0);
+                }
+                else if (token == Tokens::ID::NUMBER) {
+                    double value = std::stod(buffer);
+                    uint8_t double_bytes[sizeof(double)];
+                    memcpy(double_bytes, &value, sizeof(double));
+                    out_p_code.insert(out_p_code.end(), double_bytes, double_bytes + sizeof(double));
+                }
+            }
+        } // switch
     }
+
+    // --- This runs AFTER all tokens on the line have been processed ---
+    if (loop_to_patch_ptr) {
+        // Now, out_p_code contains the fully tokenized line, including the LOOP's condition.
+        // The current size is the correct address for jumping past the loop.
+        uint16_t after_loop_addr = out_p_code.size();
+
+        // Patch any EXITDO jumps that were found inside this loop.
+        for (uint16_t patch_addr : loop_to_patch_ptr->exit_patch_locations) {
+            out_p_code[patch_addr] = after_loop_addr & 0xFF;
+            out_p_code[patch_addr + 1] = (after_loop_addr >> 8) & 0xFF;
+        }
+
+        // Patch the pre-test jump for a DO WHILE/UNTIL ... LOOP
+        if (loop_to_patch_ptr->is_pre_test && loop_to_patch_ptr->condition_pcode_addr != 0) {
+            out_p_code[loop_to_patch_ptr->condition_pcode_addr] = after_loop_addr & 0xFF;
+            out_p_code[loop_to_patch_ptr->condition_pcode_addr + 1] = (after_loop_addr >> 8) & 0xFF;
+        }
+
+        // Now that patching is complete, pop the loop info from the stack.
+        do_loop_stack.pop_back();
+    }
+
     if (is_one_liner_if) {
         if (!if_stack.empty()) {
             // This performs the ENDIF logic implicitly by patching the jump address.
@@ -1465,6 +1539,7 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run, bool resume_m
 #ifdef SDL3
     // After the loop, ensure the graphics system is shut down
     graphics_system.shutdown();
+    sound_system.shutdown();
 #endif
 
     // Clear the pointer so it's not pointing to stale data
@@ -1581,7 +1656,14 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_do(*this);
         break;
-
+    case Tokens::ID::EXIT_FOR:
+        pcode++;
+        Commands::do_exit_for(*this);
+        break;
+    case Tokens::ID::EXIT_DO:
+        pcode++;
+        Commands::do_exit_do(*this);
+        break;
     case Tokens::ID::EDIT:
         pcode++;
         Commands::do_edit(*this);

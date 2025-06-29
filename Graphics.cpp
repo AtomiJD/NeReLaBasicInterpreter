@@ -18,11 +18,26 @@ bool Graphics::init(const std::string& title, int width, int height) {
         return false;
     }
 
+    if (TTF_Init() == -1) {
+        TextIO::print("SDL_ttf could not initialize! SDL_Error: " + std::string(SDL_GetError()) + "\n");
+        SDL_Quit();
+        return false;
+    }
+
     bool success = SDL_CreateWindowAndRenderer(title.c_str(), width, height, 0, &window, &renderer); //SDL_WINDOW_FULLSCREEN removed
     if (!success) {
         TextIO::print("Window could not be created! SDL_Error: " + std::string(SDL_GetError()) + "\n");
         return false;
     }
+
+    font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 24);
+    if (!font) {
+        // Use TextIO for consistency, but also cerr for visibility during debugging
+        std::cerr << "Failed to load font! SDL_Error: " << SDL_GetError() << std::endl;
+        TextIO::print("WARNING: Failed to load font. TEXT command will not work.\n");
+    }
+
+    SDL_StartTextInput(window);
 
     is_initialized = true;
     clear_screen();
@@ -32,6 +47,14 @@ bool Graphics::init(const std::string& title, int width, int height) {
 
 void Graphics::shutdown() {
     if (!is_initialized) return;
+
+    SDL_StopTextInput(window);
+
+    if (font) {
+        TTF_CloseFont(font);
+        font = nullptr;
+    }
+
     if (renderer) {
         SDL_DestroyRenderer(renderer);
         renderer = nullptr;
@@ -40,6 +63,7 @@ void Graphics::shutdown() {
         SDL_DestroyWindow(window);
         window = nullptr;
     }
+    TTF_Quit();
     SDL_Quit();
     is_initialized = false;
 }
@@ -65,8 +89,31 @@ bool Graphics::handle_events() {
         if (event.type == SDL_EVENT_QUIT) {
             quit_event_received = true;
         }
+        else if (event.type == SDL_EVENT_TEXT_INPUT) {
+            // event.text.text is a null-terminated string
+            // For INKEY$, we typically just care about the first character.
+            if (event.text.text[0] != '\0') {
+                key_buffer.push_back(event.text.text[0]);
+            }
+        }
+        // --- ADDED: Capture keydown for non-text keys like ESC ---
+        else if (event.type == SDL_EVENT_KEY_DOWN) {
+            // The value 27 is the ASCII code for the Escape key.
+            if (event.key.key == SDLK_ESCAPE) {
+                key_buffer.push_back(27);
+            }
+        }
     }
     return !quit_event_received;
+}
+
+std::string Graphics::get_key_from_buffer() {
+    if (!key_buffer.empty()) {
+        char c = key_buffer.front();
+        key_buffer.pop_front();
+        return std::string(1, c);
+    }
+    return ""; // Return empty string if no key is waiting
 }
 
 bool Graphics::should_quit() {
@@ -77,6 +124,40 @@ void Graphics::clear_screen(Uint8 r, Uint8 g, Uint8 b) {
     if (!renderer) return;
     SDL_SetRenderDrawColor(renderer, r, g, b, 255); // Use specified color
     SDL_RenderClear(renderer);
+}
+
+void Graphics::text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint8 g, Uint8 b) {
+    if (!renderer || !font) {
+        // Don't try to draw if the system isn't ready or the font failed to load
+        return;
+    }
+
+    SDL_Color color = { r, g, b, 255 };
+
+    // Create a surface from the text using the loaded font
+    SDL_Surface* text_surface = TTF_RenderText_Blended(font, text_to_draw.c_str(), 0, color);
+    if (!text_surface) {
+        std::cerr << "Unable to render text surface! SDL_Error: " << SDL_GetError() << std::endl;
+        return;
+    }
+
+    // Create a texture from the surface
+    SDL_Texture* text_texture = SDL_CreateTextureFromSurface(renderer, text_surface);
+    if (!text_texture) {
+        std::cerr << "Unable to create texture from rendered text! SDL_Error: " << SDL_GetError() << std::endl;
+        SDL_DestroySurface(text_surface);
+        return;
+    }
+
+    // Define the destination rectangle for the text
+    SDL_FRect dest_rect = { (float)x, (float)y, (float)text_surface->w, (float)text_surface->h };
+
+    // Copy the texture to the renderer at the specified position
+    SDL_RenderTexture(renderer, text_texture, nullptr, &dest_rect);
+
+    // Clean up the temporary resources
+    SDL_DestroyTexture(text_texture);
+    SDL_DestroySurface(text_surface);
 }
 
 void Graphics::pset(int x, int y, Uint8 r, Uint8 g, Uint8 b) {

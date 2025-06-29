@@ -12,6 +12,7 @@
 #include <future>
 #ifdef SDL3
 #include "Graphics.hpp"
+#include "SoundSystem.hpp"
 #endif
 
 
@@ -46,6 +47,13 @@ public:
         double end_value = 0;
         double step_value = 0;
         uint16_t loop_start_pcode = 0; // Address to jump back to on NEXT
+        std::vector<uint16_t> exit_patch_locations; // To patch EXIT FOR jumps
+    };
+
+    // --- This struct is for the COMPILER for_stack ---
+    struct CompilerForLoopInfo {
+        uint16_t source_line;
+        std::vector<uint16_t> exit_patch_locations;
     };
 
     // A type alias for our native C++ function pointers.
@@ -93,6 +101,7 @@ public:
         bool is_pre_test;               // True if WHILE/UNTIL is with DO, false if with LOOP
         Tokens::ID condition_type;      // WHILE or UNTIL
         uint16_t source_line;           // For error reporting
+        std::vector<uint16_t> exit_patch_locations; // To patch EXIT DO jumps
     };
 
     // --- Structures for User-Defined Types ---
@@ -146,6 +155,7 @@ public:
 
     std::vector<IfStackInfo> if_stack;
     std::vector<ForLoopInfo> for_stack;
+    std::vector <CompilerForLoopInfo> compiler_for_stack;
     std::vector<DoLoopInfo> do_loop_stack;
 
     //std::unordered_map<std::string, FunctionInfo> function_table;
@@ -177,6 +187,7 @@ public:
 
 #ifdef SDL3
     Graphics graphics_system;
+    SoundSystem sound_system;
 #endif
 
 #ifdef HTTP
