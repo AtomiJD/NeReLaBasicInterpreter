@@ -864,6 +864,45 @@ BasicValue builtin_sound_stop(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     vm.sound_system.stop_note(track);
     return false;
 }
+
+// MOUSEX() -> returns the current X coordinate of the mouse
+BasicValue builtin_mousex(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    if (!vm.graphics_system.is_initialized) {
+        return 0.0; // Return 0 if graphics are not active
+    }
+    return static_cast<double>(vm.graphics_system.get_mouse_x());
+}
+
+// MOUSEY() -> returns the current Y coordinate of the mouse
+BasicValue builtin_mousey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    if (!vm.graphics_system.is_initialized) {
+        return 0.0;
+    }
+    return static_cast<double>(vm.graphics_system.get_mouse_y());
+}
+
+// MOUSEB(button_index) -> returns TRUE or FALSE if the button is pressed
+// 1 = Left, 2 = Middle, 3 = Right
+BasicValue builtin_mouseb(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    if (!vm.graphics_system.is_initialized) {
+        return false;
+    }
+    int button_index = static_cast<int>(to_double(args[0]));
+    return vm.graphics_system.get_mouse_button_state(button_index);
+}
+
 #endif
 
 
@@ -3190,6 +3229,11 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SOUND.PLAY", 2, builtin_sound_play);
     register_proc("SOUND.RELEASE", 1, builtin_sound_release);
     register_proc("SOUND.STOP", 1, builtin_sound_stop);
+
+    register_func("MOUSEX", 0, builtin_mousex);
+    register_func("MOUSEY", 0, builtin_mousey);
+    register_func("MOUSEB", 1, builtin_mouseb);
+
 #endif
 #ifdef JDCOM
     register_func("CREATEOBJECT", 1, builtin_create_object);

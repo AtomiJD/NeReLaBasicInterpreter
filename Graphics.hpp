@@ -22,10 +22,16 @@ public:
     void circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b);
     void text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint8 g, Uint8 b);
 
+    int get_mouse_x() const;
+    int get_mouse_y() const;
+    bool get_mouse_button_state(int button) const;
+
     bool handle_events(); 
     bool should_quit();   
 
     std::string get_key_from_buffer();
+
+
 
     bool is_initialized = false;
     bool quit_event_received = false;
@@ -35,5 +41,8 @@ private:
     SDL_Renderer* renderer = nullptr;
     TTF_Font* font = nullptr;
     std::deque<char> key_buffer;
+    float mouse_x = 0.0f;
+    float mouse_y = 0.0f;
+    Uint32 mouse_button_state = 0;
 };
 #endif

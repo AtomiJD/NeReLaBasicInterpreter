@@ -96,12 +96,24 @@ bool Graphics::handle_events() {
                 key_buffer.push_back(event.text.text[0]);
             }
         }
-        // --- ADDED: Capture keydown for non-text keys like ESC ---
+        // --- Capture keydown for non-text keys like ESC ---
         else if (event.type == SDL_EVENT_KEY_DOWN) {
             // The value 27 is the ASCII code for the Escape key.
             if (event.key.key == SDLK_ESCAPE) {
                 key_buffer.push_back(27);
             }
+        }
+        // --- Handle mouse events ---
+        else if (event.type == SDL_EVENT_MOUSE_MOTION) {
+            mouse_x = event.motion.x;
+            mouse_y = event.motion.y;
+        }
+        else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+            // Update coordinates on click as well
+            mouse_x = event.button.x;
+            mouse_y = event.button.y;
+            // Get the full button state bitmask
+            mouse_button_state = SDL_GetMouseState(NULL, NULL);
         }
     }
     return !quit_event_received;
@@ -114,6 +126,19 @@ std::string Graphics::get_key_from_buffer() {
         return std::string(1, c);
     }
     return ""; // Return empty string if no key is waiting
+}
+
+int Graphics::get_mouse_x() const {
+    return static_cast<int>(mouse_x);
+}
+
+int Graphics::get_mouse_y() const {
+    return static_cast<int>(mouse_y);
+}
+
+bool Graphics::get_mouse_button_state(int button) const {
+    if (button < 1 || button > 3) return false;
+    return (mouse_button_state & SDL_BUTTON_MASK(button));
 }
 
 bool Graphics::should_quit() {
