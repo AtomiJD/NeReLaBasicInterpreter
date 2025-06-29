@@ -239,6 +239,126 @@ std::string wildcard_to_regex(const std::string& wildcard) {
     return regex_str;
 }
 
+
+/**
+ * @brief Helper to sum a 2D array along a specific dimension (axis).
+ * @param arr The 2D array to sum.
+ * @param axis The axis to sum along (0 for columns, 1 for rows).
+ * @return A new shared_ptr<Array> containing the summed vector.
+ */
+std::shared_ptr<Array> array_sum_along_axis(const std::shared_ptr<Array>& arr, int axis) {
+    if (!arr || arr->shape.size() != 2) return nullptr;
+    size_t rows = arr->shape[0];
+    size_t cols = arr->shape[1];
+    auto result_ptr = std::make_shared<Array>();
+
+    if (axis == 0) { // Sum down the columns, result is a row vector
+        result_ptr->shape = { 1, cols };
+        result_ptr->data.assign(cols, 0.0);
+        for (size_t c = 0; c < cols; ++c) {
+            for (size_t r = 0; r < rows; ++r) {
+                result_ptr->data[c] = to_double(result_ptr->data[c]) + to_double(arr->data[r * cols + c]);
+            }
+        }
+    }
+    else if (axis == 1) { // Sum across the rows, result is a column vector
+        result_ptr->shape = { rows, 1 };
+        result_ptr->data.reserve(rows);
+        for (size_t r = 0; r < rows; ++r) {
+            double row_sum = 0.0;
+            for (size_t c = 0; c < cols; ++c) {
+                row_sum += to_double(arr->data[r * cols + c]);
+            }
+            result_ptr->data.push_back(row_sum);
+        }
+    }
+    else {
+        return nullptr; // Invalid axis
+    }
+    return result_ptr;
+}
+
+/**
+  * @brief Helper to add two arrays together, element-wise, with broadcasting.
+  * @param a The first array.
+  * @param b The second array.
+  * @return A shared_ptr to a new Array containing the sum. Returns nullptr on error.
+  */
+std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b) {
+    if (!a || !b) return nullptr;
+
+    // Case 1: Broadcasting a scalar-like array (e.g., [[5]]) to a matrix/vector
+    if (b->data.size() == 1) {
+        double scalar = to_double(b->data[0]);
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = a->shape;
+        result_ptr->data.reserve(a->data.size());
+        for (const auto& elem : a->data) {
+            result_ptr->data.push_back(to_double(elem) + scalar);
+        }
+        return result_ptr;
+    }
+    // Case 2: Broadcasting a matrix/vector to a scalar-like array
+    if (a->data.size() == 1) {
+        double scalar = to_double(a->data[0]);
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = b->shape;
+        result_ptr->data.reserve(b->data.size());
+        for (const auto& elem : b->data) {
+            result_ptr->data.push_back(scalar + to_double(elem));
+        }
+        return result_ptr;
+    }
+
+    // Case 3: Broadcasting a row vector to a matrix
+    if (a->shape.size() == 2 && b->shape.size() == 2 && a->shape[0] > 1 && b->shape[0] == 1 && a->shape[1] == b->shape[1]) {
+        auto result_ptr = std::make_shared<Array>(*a); // Copy matrix
+        for (size_t r = 0; r < a->shape[0]; ++r) {
+            for (size_t c = 0; c < a->shape[1]; ++c) {
+                result_ptr->data[r * a->shape[1] + c] = to_double(a->data[r * a->shape[1] + c]) + to_double(b->data[c]);
+            }
+        }
+        return result_ptr;
+    }
+
+    // Case 4: Standard element-wise addition for arrays of the same shape
+    if (a->shape != b->shape) {
+        // If no broadcasting rule applies and shapes are different, it's an error.
+        return nullptr;
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = a->shape;
+    result_ptr->data.reserve(a->data.size());
+    for (size_t i = 0; i < a->data.size(); ++i) {
+        result_ptr->data.push_back(to_double(a->data[i]) + to_double(b->data[i]));
+    }
+    return result_ptr;
+}
+
+
+/**
+ * @brief Helper to subtract one array from another, element-wise.
+ * @param a The array to subtract from (minuend).
+ * @param b The array to subtract (subtrahend).
+ * @return A shared_ptr to a new Array containing the results. Returns nullptr on error.
+ */
+std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b) {
+    if (!a || !b || a->shape != b->shape) {
+        return nullptr;
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = a->shape;
+    result_ptr->data.reserve(a->data.size());
+
+    for (size_t i = 0; i < a->data.size(); ++i) {
+        result_ptr->data.push_back(to_double(a->data[i]) - to_double(b->data[i]));
+    }
+    return result_ptr;
+}
+
+
 namespace {
 
     // Structure to hold Gauss-Legendre quadrature points and weights
@@ -385,58 +505,7 @@ namespace {
         return array_ptr;
     }
 
-    /**
-     * @brief Helper to add two arrays together, element-wise.
-     * @param a The first array.
-     * @param b The second array.
-     * @return A shared_ptr to a new Array containing the sum. Returns nullptr on error.
-     */
-    std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b) {
-        if (!a || !b) return nullptr;
-
-        // Broadcasting logic (e.g., Matrix + Row Vector)
-        if (a->shape.size() == 2 && b->shape.size() == 2 && a->shape[0] > 1 && b->shape[0] == 1 && a->shape[1] == b->shape[1]) {
-            auto result_ptr = std::make_shared<Array>(*a); // Copy matrix
-            for (size_t r = 0; r < a->shape[0]; ++r) {
-                for (size_t c = 0; c < a->shape[1]; ++c) {
-                    result_ptr->data[r * a->shape[1] + c] = to_double(a->data[r * a->shape[1] + c]) + to_double(b->data[c]);
-                }
-            }
-            return result_ptr;
-        }
-
-        if (a->shape != b->shape) return nullptr;
-
-        auto result_ptr = std::make_shared<Array>();
-        result_ptr->shape = a->shape;
-        result_ptr->data.reserve(a->data.size());
-        for (size_t i = 0; i < a->data.size(); ++i) {
-            result_ptr->data.push_back(to_double(a->data[i]) + to_double(b->data[i]));
-        }
-        return result_ptr;
-    }
-
-    /**
-     * @brief Helper to subtract one array from another, element-wise.
-     * @param a The array to subtract from (minuend).
-     * @param b The array to subtract (subtrahend).
-     * @return A shared_ptr to a new Array containing the results. Returns nullptr on error.
-     */
-    std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b) {
-        if (!a || !b || a->shape != b->shape) {
-            return nullptr;
-        }
-
-        auto result_ptr = std::make_shared<Array>();
-        result_ptr->shape = a->shape;
-        result_ptr->data.reserve(a->data.size());
-
-        for (size_t i = 0; i < a->data.size(); ++i) {
-            result_ptr->data.push_back(to_double(a->data[i]) - to_double(b->data[i]));
-        }
-        return result_ptr;
-    }
-
+ 
     /**
      * @brief Helper to multiply each element of an array by a scalar value.
      * @param scalar The double-precision number to multiply by.
@@ -482,11 +551,11 @@ namespace {
     }
 
     //JD DRECKIG!
-    std::shared_ptr<Array> create_randomized_array(const std::vector<size_t>& shape, size_t fan_in, size_t fan_out);
-    std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
-    std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
-    std::shared_ptr<Array> array_scalar_multiply(double scalar, const std::shared_ptr<Array>& arr);
-    std::shared_ptr<Array> array_elementwise_multiply(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
+    //std::shared_ptr<Array> create_randomized_array(const std::vector<size_t>& shape, size_t fan_in, size_t fan_out);
+    //std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
+    //std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
+    //std::shared_ptr<Array> array_scalar_multiply(double scalar, const std::shared_ptr<Array>& arr);
+    //std::shared_ptr<Array> array_elementwise_multiply(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
     // --- Internal Implementations for Tensor Math ---
     // These are the core logic functions, now kept private to this file.
@@ -2990,7 +3059,7 @@ BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValu
 }
 
 /**
- * @brief Adds two Tensors or a Tensor and a scalar, building the graph.
+ * @brief Adds two Tensors, handling broadcasting and its derivative correctly.
  */
 BasicValue tensor_add(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b) {
     const auto& a_tensor = std::get<std::shared_ptr<Tensor>>(a);
@@ -3005,14 +3074,36 @@ BasicValue tensor_add(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b)
 
     result_tensor->parents = { a_tensor, b_tensor };
     result_tensor->backward_fn = [a_tensor, b_tensor](std::shared_ptr<Tensor> output_grad) -> std::vector<std::shared_ptr<Tensor>> {
-        // Gradient of A+B is just 1, so the gradient flows back to both parents unchanged.
-        // Need to handle broadcasting cases where shapes differ.
-        // For now, assume shapes are the same.
-        return { output_grad, output_grad };
+
+        // The gradient must be summed along the broadcasted dimensions.
+        auto grad_a = output_grad;
+        auto grad_b = output_grad;
+
+        // If A was broadcast, sum the output gradient to match A's original shape.
+        if (a_tensor->data->shape != output_grad->data->shape) {
+            // This is a simplified case for broadcasting a scalar or vector.
+            // A full implementation would need more complex axis tracking.
+            auto summed_grad_data = array_sum_along_axis(output_grad->data, 0); // Example: sum rows
+            grad_a = std::make_shared<Tensor>();
+            grad_a->data = summed_grad_data;
+        }
+
+        // If B was broadcast (the common case for a bias term), sum the output gradient.
+        if (b_tensor->data->shape != output_grad->data->shape) {
+            auto summed_grad_data = array_sum_along_axis(output_grad->data, 0);
+            grad_b = std::make_shared<Tensor>();
+            grad_b->data = summed_grad_data;
+        }
+
+        std::vector<std::shared_ptr<Tensor>> grads;
+        grads.push_back(grad_a);
+        grads.push_back(grad_b);
+        return grads;
         };
 
     return result_tensor;
 }
+
 
 /**
  * @brief Subtracts two Tensors, building the graph.

@@ -39,9 +39,6 @@ FUNC MODEL_FORWARD(model_array, input_tensor)
         ' Get the parameters from the layer's map
         weights = layer{"weights"}
         bias = layer{"bias"}
-        print        
-        print "I, temp_tensor, weights,  bias" 
-        print i, temp_tensor, weights,  bias
         ' Apply the layer's logic
         temp_tensor = MATMUL(temp_tensor, weights) + bias
         ' Apply activation function. Note we no longer need SIGMOID_DERIVATIVE
@@ -60,12 +57,12 @@ FUNC MSE_LOSS(predicted, actual)
     RETURN loss_tensor
 ENDFUNC
 
-
+CLS
 PRINT "--- Starting Training ---"
 
 ' --- 4. The Training Loop ---
 
-FOR i = 1 TO EPOCHS
+FOR EPI = 1 TO EPOCHS
     ' --- FORWARD PASS ---
     ' Get the model's prediction.
     PREDICTED_OUTPUT = MODEL_FORWARD(MODEL, TRAINING_INPUTS)
@@ -83,13 +80,14 @@ FOR i = 1 TO EPOCHS
     MODEL = UPDATE(MODEL, OPTIMIZER)
 
     ' Print progress every 1000 epochs
-    IF i MOD 1000 = 0 THEN
-        PRINT "Epoch:"; i; ", Loss:"; TOARRAY(LOSS_TENSOR)
+    IF EPI MOD 1000 = 0 THEN
+        PRINT "Epoch:"; EPI; ", Loss:"; TOARRAY(LOSS_TENSOR)
     ENDIF
-NEXT i
+NEXT EPI
 
 
 PRINT
 PRINT "--- Training Complete ---"
 PRINT "Final Predictions:"
-PRINT FRMV$(PREDICTED_OUTPUT)
+PRINT FRMV$(TOARRAY(PREDICTED_OUTPUT))
+
