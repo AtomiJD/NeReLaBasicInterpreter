@@ -25,7 +25,7 @@ MODEL = APPEND(MODEL,L)
 MODEL = APPEND(MODEL, CREATE_LAYER("DENSE", {"input_size": 3, "units": 1}))
 
 OPTIMIZER = CREATE_OPTIMIZER("SGD", {"learning_rate": 0.1})
-EPOCHS = 10000
+EPOCHS = 20000
 
 
 ' --- 3. Helper Functions ---

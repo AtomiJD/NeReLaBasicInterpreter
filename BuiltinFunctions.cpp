@@ -3276,7 +3276,7 @@ BasicValue builtin_backward(NeReLaBasic& vm, const std::vector<BasicValue>& args
 
 
 /**
- * @brief Updates a model's parameters using an optimizer configuration.
+ * @brief Updates a model's parameters using an optimizer configuration and clears gradients.
  * @param vm The interpreter instance.
  * @param args A vector containing two arguments: the model and the optimizer.
  * @return The updated model.
@@ -3311,23 +3311,30 @@ BasicValue builtin_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         auto& weights = std::get<std::shared_ptr<Tensor>>(layer_map->data["weights"]);
         auto& bias = std::get<std::shared_ptr<Tensor>>(layer_map->data["bias"]);
 
+        // Apply the update rule: param = param - lr * param.grad
         if (weights && weights->grad && weights->grad->data) {
-            // Calculate the change: learning_rate * gradient
             auto delta_w = array_scalar_multiply(lr, weights->grad->data);
-            // Apply the change: weights.data = weights.data - delta_w
             weights->data = array_subtract(weights->data, delta_w);
         }
 
         if (bias && bias->grad && bias->grad->data) {
-            // Calculate and apply the change for the bias
             auto delta_b = array_scalar_multiply(lr, bias->grad->data);
             bias->data = array_subtract(bias->data, delta_b);
+        }
+
+        // --- THIS IS THE FIX ---
+        // Clear the gradients after they have been used for the update.
+        // This is equivalent to optimizer.zero_grad() in other frameworks.
+        if (weights) {
+            weights->grad = nullptr;
+        }
+        if (bias) {
+            bias->grad = nullptr;
         }
     }
 
     return args[0];
 }
-
 
 // --- Arithmetic Functions ---
 
