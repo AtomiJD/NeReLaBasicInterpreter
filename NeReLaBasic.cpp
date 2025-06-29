@@ -2173,16 +2173,69 @@ BasicValue NeReLaBasic::parse_term() {
                 // Case 1: Array-Array operation
                 if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
                     if (!l || !r) { Error::set(15, runtime_current_line); return false; }
-                    if (l->shape != r->shape) { Error::set(15, runtime_current_line); return false; }
 
-                    auto result_ptr = std::make_shared<Array>();
-                    result_ptr->shape = l->shape;
-                    result_ptr->data.reserve(l->data.size());
-                    for (size_t i = 0; i < l->data.size(); ++i) {
-                        if (op == Tokens::ID::C_PLUS) result_ptr->data.push_back(to_double(l->data[i]) + to_double(r->data[i]));
-                        else result_ptr->data.push_back(to_double(l->data[i]) - to_double(r->data[i]));
+                    // --- BROADCASTING LOGIC ---
+                    // Case A: Matrix + Row Vector
+                    if (l->shape.size() == 2 && r->shape.size() == 2 && l->shape[0] > 1 && r->shape[0] == 1 && l->shape[1] == r->shape[1]) {
+                        auto result_ptr = std::make_shared<Array>(*l); // Copy left matrix
+                        for (size_t i = 0; i < l->shape[0]; ++i) {
+                            for (size_t j = 0; j < l->shape[1]; ++j) {
+                                double left_val = to_double(result_ptr->data[i * l->shape[1] + j]);
+                                double right_val = to_double(r->data[j]);
+                                if (op == Tokens::ID::C_PLUS) result_ptr->data[i * l->shape[1] + j] = left_val + right_val;
+                                else result_ptr->data[i * l->shape[1] + j] = left_val - right_val;
+                            }
+                        }
+                        return result_ptr;
                     }
-                    return result_ptr;
+                    // Case B: Row Vector + Matrix
+                    else if (l->shape.size() == 2 && r->shape.size() == 2 && l->shape[0] == 1 && r->shape[0] > 1 && l->shape[1] == r->shape[1]) {
+                        auto result_ptr = std::make_shared<Array>(*r); // Copy right matrix
+                        for (size_t i = 0; i < r->shape[0]; ++i) {
+                            for (size_t j = 0; j < r->shape[1]; ++j) {
+                                double left_val = to_double(l->data[j]);
+                                double right_val = to_double(result_ptr->data[i * r->shape[1] + j]);
+                                if (op == Tokens::ID::C_PLUS) result_ptr->data[i * r->shape[1] + j] = left_val + right_val;
+                                else result_ptr->data[i * r->shape[1] + j] = left_val - right_val;
+                            }
+                        }
+                        return result_ptr;
+                    }
+                    // --- ADDED: Case C: Matrix + Scalar-like Array (e.g., matrix + [[5]]) ---
+                    else if (r->data.size() == 1) {
+                        auto result_ptr = std::make_shared<Array>(*l); // Copy left array/matrix
+                        double scalar = to_double(r->data[0]);
+                        for (auto& elem : result_ptr->data) {
+                            if (op == Tokens::ID::C_PLUS) elem = to_double(elem) + scalar;
+                            else elem = to_double(elem) - scalar;
+                        }
+                        return result_ptr;
+                    }
+                    // --- ADDED: Case D: Scalar-like Array + Matrix ---
+                    else if (l->data.size() == 1) {
+                        auto result_ptr = std::make_shared<Array>(*r); // Copy right array/matrix
+                        double scalar = to_double(l->data[0]);
+                        for (auto& elem : result_ptr->data) {
+                            if (op == Tokens::ID::C_PLUS) elem = scalar + to_double(elem);
+                            else elem = scalar - to_double(elem);
+                        }
+                        return result_ptr;
+                    }
+                    // Case E: Original non-broadcasting logic for same-sized arrays
+                    else if (l->shape == r->shape) {
+                        auto result_ptr = std::make_shared<Array>();
+                        result_ptr->shape = l->shape;
+                        result_ptr->data.reserve(l->data.size());
+                        for (size_t i = 0; i < l->data.size(); ++i) {
+                            if (op == Tokens::ID::C_PLUS) result_ptr->data.push_back(to_double(l->data[i]) + to_double(r->data[i]));
+                            else result_ptr->data.push_back(to_double(l->data[i]) - to_double(r->data[i]));
+                        }
+                        return result_ptr;
+                    }
+                    else {
+                        Error::set(15, runtime_current_line, "Array shape mismatch for addition/subtraction.");
+                        return false;
+                    }
                 }
                 // Case 2: Array-Scalar operation
                 else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {

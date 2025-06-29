@@ -1861,7 +1861,7 @@ BasicValue builtin_matmul(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     const auto& b_ptr = std::get<std::shared_ptr<Array>>(args[1]);
 
     if (!a_ptr || !b_ptr || a_ptr->shape.size() != 2 || b_ptr->shape.size() != 2) {
-        Error::set(15, vm.runtime_current_line); // Must be matrices
+        Error::set(15, vm.runtime_current_line, "Both parameter must be matrices"); // Must be matrices
         return {};
     }
 
@@ -1871,7 +1871,7 @@ BasicValue builtin_matmul(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     size_t cols_b = b_ptr->shape[1];
 
     if (cols_a != rows_b) {
-        Error::set(15, vm.runtime_current_line); // Inner dimensions must match
+        Error::set(15, vm.runtime_current_line, "Inner dimensions must match"); // Inner dimensions must match
         return {};
     }
 
