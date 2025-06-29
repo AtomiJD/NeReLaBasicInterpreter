@@ -37,6 +37,8 @@ bool Graphics::init(const std::string& title, int width, int height) {
         TextIO::print("WARNING: Failed to load font. TEXT command will not work.\n");
     }
 
+    SDL_StartTextInput(window);
+
     is_initialized = true;
     clear_screen();
     update_screen();
@@ -45,6 +47,8 @@ bool Graphics::init(const std::string& title, int width, int height) {
 
 void Graphics::shutdown() {
     if (!is_initialized) return;
+
+    SDL_StopTextInput(window);
 
     if (font) {
         TTF_CloseFont(font);
@@ -85,8 +89,31 @@ bool Graphics::handle_events() {
         if (event.type == SDL_EVENT_QUIT) {
             quit_event_received = true;
         }
+        else if (event.type == SDL_EVENT_TEXT_INPUT) {
+            // event.text.text is a null-terminated string
+            // For INKEY$, we typically just care about the first character.
+            if (event.text.text[0] != '\0') {
+                key_buffer.push_back(event.text.text[0]);
+            }
+        }
+        // --- ADDED: Capture keydown for non-text keys like ESC ---
+        else if (event.type == SDL_EVENT_KEY_DOWN) {
+            // The value 27 is the ASCII code for the Escape key.
+            if (event.key.key == SDLK_ESCAPE) {
+                key_buffer.push_back(27);
+            }
+        }
     }
     return !quit_event_received;
+}
+
+std::string Graphics::get_key_from_buffer() {
+    if (!key_buffer.empty()) {
+        char c = key_buffer.front();
+        key_buffer.pop_front();
+        return std::string(1, c);
+    }
+    return ""; // Return empty string if no key is waiting
 }
 
 bool Graphics::should_quit() {

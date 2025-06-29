@@ -49,6 +49,8 @@ namespace {
         {"LOOP",    Tokens::ID::LOOP},   
         {"WHILE",   Tokens::ID::WHILE},  
         {"UNTIL",   Tokens::ID::UNTIL},  
+        {"EXITFOR", Tokens::ID::EXIT_FOR}, 
+        {"EXITDO",  Tokens::ID::EXIT_DO},  
         {"INPUT",   Tokens::ID::INPUT},
         {"TRON",    Tokens::ID::TRON},
         {"TROFF",   Tokens::ID::TROFF},

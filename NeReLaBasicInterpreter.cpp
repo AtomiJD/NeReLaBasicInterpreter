@@ -1,6 +1,6 @@
 // NeReLaBasicInterpreter.cpp
-// Preprocessing: JDCOM; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT
-// Linker: SDL3.lib; libssl.lib;libcrypto.lib;
+// Preprocessing: SDL3; HTTP; JDCOM; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT
+// Linker: SDL3.lib; SDL3_ttf.lib; libssl.lib;libcrypto.lib;
 #include "NeReLaBasic.hpp"
 #include "Commands.hpp" // Required for Commands::do_run
 #include "Error.hpp"    // Required for Error::print

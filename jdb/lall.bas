@@ -1,7 +1,8 @@
-func lall(a)
- b = a*2
- stop
- return b*2
-endfunc
-
-print lall(5)
+For i = 1 to 3
+    for j = 1 to 3
+        print i,J
+        if j = 2 then 
+            exitfor
+        Endif
+    next j
+next i

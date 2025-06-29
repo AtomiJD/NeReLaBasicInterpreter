@@ -1185,6 +1185,46 @@ void Commands::do_loop(NeReLaBasic& vm) {
     }
 }
 
+// Jumps execution to the address immediately following the corresponding NEXT statement.
+void Commands::do_exit_for(NeReLaBasic& vm) {
+    // Read the 2-byte jump address that was patched by the tokenizer.
+    uint8_t lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t jump_target = (msb << 8) | lsb;
+
+    // The FOR stack for this loop is still active. We must pop it
+    // to correctly clean up the loop state before jumping out.
+    if (!vm.for_stack.empty()) {
+        vm.for_stack.pop_back();
+    }
+    else {
+        // This should not happen if the tokenizer works correctly, but it's a safe-guard.
+        Error::set(1, vm.runtime_current_line, "EXIT FOR without active FOR loop.");
+        return;
+    }
+
+    vm.pcode = jump_target;
+}
+
+// Jumps execution to the address immediately following the corresponding LOOP statement.
+void Commands::do_exit_do(NeReLaBasic& vm) {
+    // Read the 2-byte jump address that was patched by the tokenizer.
+    uint8_t lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t jump_target = (msb << 8) | lsb;
+
+    // The DO stack for this loop is still active. Pop it for cleanup.
+    //if (!vm.do_loop_stack.empty()) {
+    //    vm.do_loop_stack.pop_back();
+    //}
+    //else {
+    //    Error::set(1, vm.runtime_current_line, "EXIT DO without active DO loop.");
+    //    return;
+    //}
+
+    vm.pcode = jump_target;
+}
+
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;
 

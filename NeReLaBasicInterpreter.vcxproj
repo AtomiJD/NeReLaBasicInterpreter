@@ -152,6 +152,7 @@
     <ClCompile Include="NeReLaBasic.cpp" />
     <ClCompile Include="NeReLaBasicInterpreter.cpp" />
     <ClCompile Include="NetworkManager.cpp" />
+    <ClCompile Include="SoundSystem.cpp" />
     <ClCompile Include="Statements.cpp" />
     <ClCompile Include="StringUtils.cpp" />
     <ClCompile Include="TextEditor.cpp" />
@@ -165,6 +166,7 @@
     <ClInclude Include="Graphics.hpp" />
     <ClInclude Include="LocaleManager.hpp" />
     <ClInclude Include="NeReLaBasic.hpp" />
+    <ClInclude Include="SoundSystem.hpp" />
     <ClInclude Include="Statements.hpp" />
     <ClInclude Include="StringUtils.hpp" />
     <ClInclude Include="TextEditor.hpp" />

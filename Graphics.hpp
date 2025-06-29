@@ -4,6 +4,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <string>
 #include <vector>
+#include <deque>
 
 class Graphics {
 public:
@@ -23,6 +24,9 @@ public:
 
     bool handle_events(); 
     bool should_quit();   
+
+    std::string get_key_from_buffer();
+
     bool is_initialized = false;
     bool quit_event_received = false;
 
@@ -30,5 +34,6 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     TTF_Font* font = nullptr;
+    std::deque<char> key_buffer;
 };
 #endif
