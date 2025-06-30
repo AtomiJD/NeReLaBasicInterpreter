@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include "NeReLaBasic.hpp"
+#include "json.hpp" // Include for nlohmann::json type
 
 // Forward-declare the main classes/structs to avoid circular dependencies
 class NeReLaBasic;
@@ -14,8 +15,10 @@ using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>
 // It takes a reference to the interpreter and a reference to the specific
 // function table (e.g., the main table or a module's table) that it should populate.
 void register_builtin_functions(NeReLaBasic& vm, FunctionTable& table_to_populate);
+BasicValue builtin_transpose(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 
 BasicValue json_to_basic_value(const nlohmann::json& j);
+nlohmann::json basic_to_json_value(const BasicValue& val);
 
 #ifdef JDCOM
 _variant_t basic_value_to_variant_t(const BasicValue& val);

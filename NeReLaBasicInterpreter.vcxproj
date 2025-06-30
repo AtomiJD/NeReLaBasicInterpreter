@@ -143,6 +143,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AIFunctions.cpp" />
     <ClCompile Include="BuiltinFunctions.cpp" />
     <ClCompile Include="Commands.cpp" />
     <ClCompile Include="DAPHandler.cpp" />
@@ -160,6 +161,7 @@
     <ClCompile Include="TextIO.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AIFunctions.hpp" />
     <ClInclude Include="BuiltinFunctions.hpp" />
     <ClInclude Include="Commands.hpp" />
     <ClInclude Include="DAPHandler.hpp" />
