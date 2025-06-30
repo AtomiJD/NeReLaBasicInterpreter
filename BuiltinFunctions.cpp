@@ -27,6 +27,8 @@
 BasicValue builtin_matmul(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 BasicValue builtin_sigmoid(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 BasicValue builtin_transpose(NeReLaBasic& vm, const std::vector<BasicValue>& args);
+BasicValue builtin_conv2d(NeReLaBasic& vm, const std::vector<BasicValue>& args);
+BasicValue builtin_maxpool2d(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 
 #ifdef HTTP
 #include "NetworkManager.hpp"
@@ -504,7 +506,6 @@ namespace {
 
         return array_ptr;
     }
-
  
     /**
      * @brief Helper to multiply each element of an array by a scalar value.
@@ -550,13 +551,6 @@ namespace {
         return result_ptr;
     }
 
-    //JD DRECKIG!
-    //std::shared_ptr<Array> create_randomized_array(const std::vector<size_t>& shape, size_t fan_in, size_t fan_out);
-    //std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
-    //std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
-    //std::shared_ptr<Array> array_scalar_multiply(double scalar, const std::shared_ptr<Array>& arr);
-    //std::shared_ptr<Array> array_elementwise_multiply(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
-
     // --- Internal Implementations for Tensor Math ---
     // These are the core logic functions, now kept private to this file.
     // 
@@ -570,6 +564,25 @@ namespace {
             result_ptr->data.push_back(std::pow(to_double(elem), exponent));
         }
         return result_ptr;
+    }
+
+    /**
+     * @brief Rotates a 4D kernel (filter) by 180 degrees.
+     * This is needed for the d_input calculation, which is a full convolution.
+     * @param kernel The kernel to rotate. Shape: [out_c, in_c, h, w]
+     * @return A new shared_ptr<Array> containing the rotated kernel.
+     */
+    std::shared_ptr<Array> rotate180(const std::shared_ptr<Array>& kernel) {
+        auto rotated_kernel = std::make_shared<Array>(*kernel); // Make a copy
+        size_t h = kernel->shape[2];
+        size_t w = kernel->shape[3];
+        size_t plane_size = h * w;
+
+        for (size_t i = 0; i < kernel->data.size() / plane_size; ++i) {
+            size_t plane_start = i * plane_size;
+            std::reverse(rotated_kernel->data.begin() + plane_start, rotated_kernel->data.begin() + plane_start + plane_size);
+        }
+        return rotated_kernel;
     }
 
     // SUM(array, [dimension]) -> number or array
@@ -2265,48 +2278,73 @@ BasicValue builtin_reverse(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     return new_array_ptr;
 }
 
-// SLICE(matrix, dimension, index) -> vector
-// Extracts a slice (row or column) from a 2D matrix.
+/**
+ * @brief Extracts a slice from an N-dimensional array along a specified dimension.
+ * @param vm The interpreter instance.
+ * @param args A vector: array, dimension, index
+ * @return A new Array of rank N-1.
+ */
 BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return {}; }
-    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line); return {}; }
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "SLICE requires 3 arguments: array, dimension, index");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to SLICE must be an array.");
+        return {};
+    }
 
-    const auto& matrix_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
     int dimension = static_cast<int>(to_double(args[1]));
     int index = static_cast<int>(to_double(args[2]));
 
-    if (!matrix_ptr || matrix_ptr->shape.size() != 2) {
-        Error::set(15, vm.runtime_current_line); // Must be a 2D matrix
-        return {};
+    if (!source_ptr || source_ptr->shape.empty()) {
+        Error::set(15, vm.runtime_current_line, "Cannot slice a null or empty array."); return {};
+    }
+    if (dimension < 0 || (size_t)dimension >= source_ptr->shape.size()) {
+        Error::set(10, vm.runtime_current_line, "Slice dimension is out of bounds."); return {};
+    }
+    if (index < 0 || (size_t)index >= source_ptr->shape[dimension]) {
+        Error::set(10, vm.runtime_current_line, "Slice index is out of bounds for the given dimension."); return {};
     }
 
-    size_t rows = matrix_ptr->shape[0];
-    size_t cols = matrix_ptr->shape[1];
-    auto result_ptr = std::make_shared<Array>();
-
-    if (dimension == 0) { // Slice a row
-        if (index < 0 || (size_t)index >= rows) { Error::set(10, vm.runtime_current_line); return {}; } // Index out of bounds
-
-        result_ptr->shape = { cols };
-        size_t start_pos = index * cols;
-        result_ptr->data.assign(matrix_ptr->data.begin() + start_pos, matrix_ptr->data.begin() + start_pos + cols);
-    }
-    else if (dimension == 1) { // Slice a column
-        if (index < 0 || (size_t)index >= cols) { Error::set(10, vm.runtime_current_line); return {}; } // Index out of bounds
-
-        result_ptr->shape = { rows };
-        result_ptr->data.reserve(rows);
-        for (size_t r = 0; r < rows; ++r) {
-            result_ptr->data.push_back(matrix_ptr->data[r * cols + index]);
+    // 1. Determine the shape of the resulting slice (rank is N-1)
+    std::vector<size_t> new_shape;
+    for (size_t i = 0; i < source_ptr->shape.size(); ++i) {
+        if (i != (size_t)dimension) {
+            new_shape.push_back(source_ptr->shape[i]);
         }
     }
-    else {
-        Error::set(1, vm.runtime_current_line); // Invalid dimension
-        return {};
+    // If we slice a 1D vector, the result is a scalar. We'll represent it as a 1-element array.
+    if (new_shape.empty()) {
+        new_shape.push_back(1);
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = new_shape;
+
+    // 2. Calculate strides for efficient data copying
+    size_t outer_dims = 1;
+    for (int i = 0; i < dimension; ++i) {
+        outer_dims *= source_ptr->shape[i];
+    }
+
+    size_t inner_dims = 1;
+    for (size_t i = dimension + 1; i < source_ptr->shape.size(); ++i) {
+        inner_dims *= source_ptr->shape[i];
+    }
+
+    // 3. Iterate and copy the sliced data
+    for (size_t i = 0; i < outer_dims; ++i) {
+        size_t start_pos = (i * source_ptr->shape[dimension] * inner_dims) + ((size_t)index * inner_dims);
+        result_ptr->data.insert(result_ptr->data.end(),
+            source_ptr->data.begin() + start_pos,
+            source_ptr->data.begin() + start_pos + inner_dims);
     }
 
     return result_ptr;
 }
+
 
 // MVLET(matrix, dimension, index, vector) -> matrix
 // Replaces a row or column in a matrix with a vector, returning a new matrix.
@@ -2958,6 +2996,205 @@ BasicValue builtin_to_tensor(NeReLaBasic& vm, const std::vector<BasicValue>& arg
 }
 
 /**
+ * @brief Performs a 2D convolution operation, including the backward pass for autodiff.
+ * @param vm The interpreter instance.
+ * @param args A vector: input_tensor, kernel_tensor, bias_tensor, stride, padding
+ * @return A new Tensor containing the result (feature map).
+ */
+BasicValue builtin_conv2d(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 5) { Error::set(8, vm.runtime_current_line, "CONV2D requires 5 arguments."); return {}; }
+    const auto& input_tensor = std::get<std::shared_ptr<Tensor>>(args[0]);
+    const auto& kernel_tensor = std::get<std::shared_ptr<Tensor>>(args[1]);
+    const auto& bias_tensor = std::get<std::shared_ptr<Tensor>>(args[2]);
+    int stride = static_cast<int>(to_double(args[3]));
+    int padding = static_cast<int>(to_double(args[4]));
+
+    // --- FORWARD PASS ---
+    // (The forward pass logic remains the same as before)
+    size_t in_channels = input_tensor->data->shape[1];
+    size_t in_height = input_tensor->data->shape[2];
+    size_t in_width = input_tensor->data->shape[3];
+    size_t out_channels = kernel_tensor->data->shape[0];
+    size_t kernel_h = kernel_tensor->data->shape[2];
+    size_t kernel_w = kernel_tensor->data->shape[3];
+    size_t out_height = static_cast<size_t>(std::floor((in_height + 2 * padding - kernel_h) / stride)) + 1;
+    size_t out_width = static_cast<size_t>(std::floor((in_width + 2 * padding - kernel_w) / stride)) + 1;
+
+    auto result_array = std::make_shared<Array>();
+    result_array->shape = { 1, out_channels, out_height, out_width };
+    result_array->data.assign(out_channels * out_height * out_width, 0.0);
+
+    for (size_t oc = 0; oc < out_channels; ++oc) {
+        for (size_t y = 0; y < out_height; ++y) {
+            for (size_t x = 0; x < out_width; ++x) {
+                double sum = 0.0;
+                for (size_t ic = 0; ic < in_channels; ++ic) {
+                    for (size_t ky = 0; ky < kernel_h; ++ky) {
+                        for (size_t kx = 0; kx < kernel_w; ++kx) {
+                            int input_y = y * stride + ky - padding;
+                            int input_x = x * stride + kx - padding;
+                            if (input_y >= 0 && input_y < in_height && input_x >= 0 && input_x < in_width) {
+                                double input_val = to_double(input_tensor->data->data[ic * (in_height * in_width) + input_y * in_width + input_x]);
+                                double kernel_val = to_double(kernel_tensor->data->data[oc * (in_channels * kernel_h * kernel_w) + ic * (kernel_h * kernel_w) + ky * kernel_w + kx]);
+                                sum += input_val * kernel_val;
+                            }
+                        }
+                    }
+                }
+                sum += to_double(bias_tensor->data->data[oc]);
+                result_array->data[oc * (out_height * out_width) + y * out_width + x] = sum;
+            }
+        }
+    }
+
+    auto result_tensor = std::make_shared<Tensor>();
+    result_tensor->data = result_array;
+    result_tensor->parents = { input_tensor, kernel_tensor, bias_tensor };
+
+    // --- BACKWARD PASS DEFINITION ---
+    result_tensor->backward_fn = [=](std::shared_ptr<Tensor> output_grad) -> std::vector<std::shared_ptr<Tensor>> {
+        auto d_input_arr = std::make_shared<Array>();
+        d_input_arr->shape = input_tensor->data->shape;
+        d_input_arr->data.assign(input_tensor->data->size(), 0.0);
+
+        auto d_kernel_arr = std::make_shared<Array>();
+        d_kernel_arr->shape = kernel_tensor->data->shape;
+        d_kernel_arr->data.assign(kernel_tensor->data->size(), 0.0);
+
+        auto d_bias_arr = std::make_shared<Array>();
+        d_bias_arr->shape = bias_tensor->data->shape;
+        d_bias_arr->data.assign(bias_tensor->data->size(), 0.0);
+
+        auto rotated_kernel = rotate180(kernel_tensor->data);
+
+        // This loop calculates all three gradients simultaneously
+        for (size_t oc = 0; oc < out_channels; ++oc) {
+            for (size_t y = 0; y < out_height; ++y) {
+                for (size_t x = 0; x < out_width; ++x) {
+                    double grad_out_val = to_double(output_grad->data->data[oc * (out_height * out_width) + y * out_width + x]);
+
+                    // --- Calculate Gradient for Bias (d_bias) ---
+                    // The gradient for a bias is simply the sum of the gradients from the feature map it influenced.
+                    d_bias_arr->data[oc] = to_double(d_bias_arr->data[oc]) + grad_out_val;
+
+                    // --- Calculate Gradients for Input (d_input) and Kernel (d_kernel) ---
+                    for (size_t ic = 0; ic < in_channels; ++ic) {
+                        for (size_t ky = 0; ky < kernel_h; ++ky) {
+                            for (size_t kx = 0; kx < kernel_w; ++kx) {
+                                int input_y = y * stride + ky - padding;
+                                int input_x = x * stride + kx - padding;
+
+                                if (input_y >= 0 && input_y < in_height && input_x >= 0 && input_x < in_width) {
+                                    // Calculate d_kernel: convolve input with output_grad
+                                    double input_val = to_double(input_tensor->data->data[ic * (in_height * in_width) + input_y * in_width + input_x]);
+                                    size_t d_kernel_idx = oc * (in_channels * kernel_h * kernel_w) + ic * (kernel_h * kernel_w) + ky * kernel_w + kx;
+                                    d_kernel_arr->data[d_kernel_idx] = to_double(d_kernel_arr->data[d_kernel_idx]) + (input_val * grad_out_val);
+
+                                    // Calculate d_input: convolve output_grad with rotated kernel
+                                    double rotated_kernel_val = to_double(rotated_kernel->data[d_kernel_idx]);
+                                    size_t d_input_idx = ic * (in_height * in_width) + input_y * in_width + input_x;
+                                    d_input_arr->data[d_input_idx] = to_double(d_input_arr->data[d_input_idx]) + (rotated_kernel_val * grad_out_val);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        auto d_input = std::make_shared<Tensor>(); d_input->data = d_input_arr;
+        auto d_kernel = std::make_shared<Tensor>(); d_kernel->data = d_kernel_arr;
+        auto d_bias = std::make_shared<Tensor>(); d_bias->data = d_bias_arr;
+
+        return { d_input, d_kernel, d_bias };
+        };
+
+    return result_tensor;
+}
+
+
+/**
+ * @brief Performs a 2D max pooling operation.
+ * @param vm The interpreter instance.
+ * @param args A vector: input_tensor, pool_size, stride
+ * @return A new Tensor containing the downsampled result.
+ */
+BasicValue builtin_maxpool2d(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line, "MAXPOOL2D requires 3 arguments."); return {}; }
+    const auto& input = std::get<std::shared_ptr<Tensor>>(args[0]);
+    int pool_size = static_cast<int>(to_double(args[1]));
+    int stride = static_cast<int>(to_double(args[2]));
+
+    size_t channels = input->data->shape[1];
+    size_t in_height = input->data->shape[2];
+    size_t in_width = input->data->shape[3];
+
+    size_t out_height = static_cast<size_t>(std::floor((in_height - pool_size) / stride)) + 1;
+    size_t out_width = static_cast<size_t>(std::floor((in_width - pool_size) / stride)) + 1;
+
+    auto result_array = std::make_shared<Array>();
+    result_array->shape = { 1, channels, out_height, out_width };
+    result_array->data.resize(channels * out_height * out_width);
+
+    // This array will store the indices of the max values, needed for backpropagation.
+    auto indices_array = std::make_shared<Array>();
+    indices_array->shape = result_array->shape;
+    indices_array->data.resize(result_array->size());
+
+    for (size_t c = 0; c < channels; ++c) {
+        for (size_t y = 0; y < out_height; ++y) {
+            for (size_t x = 0; x < out_width; ++x) {
+                double max_val = -std::numeric_limits<double>::infinity();
+                size_t max_index = 0;
+                for (int py = 0; py < pool_size; ++py) {
+                    for (int px = 0; px < pool_size; ++px) {
+                        int input_y = y * stride + py;
+                        int input_x = x * stride + px;
+                        size_t current_index = c * (in_height * in_width) + input_y * in_width + input_x;
+                        double current_val = to_double(input->data->data[current_index]);
+                        if (current_val > max_val) {
+                            max_val = current_val;
+                            max_index = current_index;
+                        }
+                    }
+                }
+                result_array->data[c * (out_height * out_width) + y * out_width + x] = max_val;
+                indices_array->data[c * (out_height * out_width) + y * out_width + x] = static_cast<double>(max_index);
+            }
+        }
+    }
+
+    auto result_tensor = std::make_shared<Tensor>();
+    result_tensor->data = result_array;
+    result_tensor->parents = { input };
+
+    // Backward pass for max pooling routes the gradient to the location of the max value.
+    result_tensor->backward_fn = [input_shape = input->data->shape, indices_array](std::shared_ptr<Tensor> output_grad) -> std::vector<std::shared_ptr<Tensor>> {
+        auto input_grad_array = std::make_shared<Array>();
+        input_grad_array->shape = input_shape;
+        input_grad_array->data.assign(input_shape[0] * input_shape[1] * input_shape[2] * input_shape[3], 0.0);
+
+        for (size_t i = 0; i < output_grad->data->data.size(); ++i) {
+            size_t max_idx = static_cast<size_t>(to_double(indices_array->data[i]));
+            // The += operator is not defined for std::variant (BasicValue).
+            // We must perform the operation manually.
+            double current_grad = to_double(input_grad_array->data[max_idx]);
+            double new_grad = to_double(output_grad->data->data[i]);
+            input_grad_array->data[max_idx] = current_grad + new_grad;
+        }
+
+        auto final_grad = std::make_shared<Tensor>();
+        final_grad->data = input_grad_array;
+        std::vector<std::shared_ptr<Tensor>> grads;
+        grads.push_back(final_grad);
+        return grads;
+        };
+
+    return result_tensor;
+}
+
+
+/**
  * @brief Creates and initializes a neural network layer.
  * @param vm The interpreter instance.
  * @param args Args from BASIC: layer_type_string$, options_map
@@ -3007,6 +3244,27 @@ BasicValue builtin_create_layer(NeReLaBasic& vm, const std::vector<BasicValue>& 
         bias_tensor->data = bias_array;
         layer_result_ptr->data["bias"] = bias_tensor;
 
+    }
+    else if (layer_type == "CONV2D") {
+        size_t in_channels = static_cast<size_t>(to_double(options_map_ptr->data.at("in_channels")));
+        size_t out_channels = static_cast<size_t>(to_double(options_map_ptr->data.at("out_channels")));
+        size_t kernel_size = static_cast<size_t>(to_double(options_map_ptr->data.at("kernel_size")));
+
+        // Kernel shape: [out_channels, in_channels, kernel_size, kernel_size]
+        auto weights_tensor = std::make_shared<Tensor>();
+        weights_tensor->data = create_randomized_array({ out_channels, in_channels, kernel_size, kernel_size }, in_channels * kernel_size * kernel_size, out_channels * kernel_size * kernel_size);
+        layer_result_ptr->data["weights"] = weights_tensor;
+
+        auto bias_tensor = std::make_shared<Tensor>();
+        auto bias_array = std::make_shared<Array>();
+        bias_array->shape = { out_channels }; // Bias is one per output channel
+        bias_array->data.assign(out_channels, 0.0);
+        bias_tensor->data = bias_array;
+        layer_result_ptr->data["bias"] = bias_tensor;
+
+    }
+    else if (layer_type == "MAXPOOL2D") {
+        // No weights or biases needed for max pooling. The options are stored above.
     }
     else {
         Error::set(1, vm.runtime_current_line, "Unknown layer type: " + layer_type);
@@ -3074,22 +3332,18 @@ BasicValue tensor_add(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b)
 
     result_tensor->parents = { a_tensor, b_tensor };
     result_tensor->backward_fn = [a_tensor, b_tensor](std::shared_ptr<Tensor> output_grad) -> std::vector<std::shared_ptr<Tensor>> {
-
-        // The gradient must be summed along the broadcasted dimensions.
         auto grad_a = output_grad;
         auto grad_b = output_grad;
 
-        // If A was broadcast, sum the output gradient to match A's original shape.
-        if (a_tensor->data->shape != output_grad->data->shape) {
-            // This is a simplified case for broadcasting a scalar or vector.
-            // A full implementation would need more complex axis tracking.
-            auto summed_grad_data = array_sum_along_axis(output_grad->data, 0); // Example: sum rows
+        // Handle gradient for operand A if it was broadcast
+        if (a_tensor->data->data.size() < output_grad->data->data.size()) {
+            auto summed_grad_data = array_sum_along_axis(output_grad->data, 0);
             grad_a = std::make_shared<Tensor>();
             grad_a->data = summed_grad_data;
         }
 
-        // If B was broadcast (the common case for a bias term), sum the output gradient.
-        if (b_tensor->data->shape != output_grad->data->shape) {
+        // Handle gradient for operand B if it was broadcast (the common case for a bias term)
+        if (b_tensor->data->data.size() < output_grad->data->data.size()) {
             auto summed_grad_data = array_sum_along_axis(output_grad->data, 0);
             grad_b = std::make_shared<Tensor>();
             grad_b->data = summed_grad_data;
@@ -3335,6 +3589,137 @@ BasicValue builtin_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
     return args[0];
 }
+
+/**
+ * @brief Saves a model's structure and weights to a JSON file.
+ * @param vm The interpreter instance.
+ * @param args Args from BASIC: model_array, filename_string
+ * @return A dummy boolean value (as this is a procedure).
+ */
+BasicValue builtin_save_model(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SAVE_MODEL requires two arguments: model_array, filename.");
+        return false;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::string>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Invalid argument types for SAVE_MODEL.");
+        return false;
+    }
+
+    const auto& model_array_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const std::string filename = std::get<std::string>(args[1]);
+
+    if (!model_array_ptr) { Error::set(3, vm.runtime_current_line, "Model is null."); return false; }
+
+    nlohmann::json j_model = nlohmann::json::array();
+
+    for (const auto& layer_val : model_array_ptr->data) {
+        if (!std::holds_alternative<std::shared_ptr<Map>>(layer_val)) continue;
+        const auto& layer_map = std::get<std::shared_ptr<Map>>(layer_val);
+
+        nlohmann::json j_layer;
+        j_layer["type"] = to_string(layer_map->data["type"]);
+
+        // Save weights
+        const auto& weights_tensor = std::get<std::shared_ptr<Tensor>>(layer_map->data["weights"]);
+        j_layer["weights"]["shape"] = weights_tensor->data->shape;
+        // --- FIX: Manually convert each BasicValue to a JSON value ---
+        nlohmann::json j_weights_data = nlohmann::json::array();
+        for (const auto& val : weights_tensor->data->data) {
+            j_weights_data.push_back(basic_to_json_value(val));
+        }
+        j_layer["weights"]["data"] = j_weights_data;
+
+        // Save bias
+        const auto& bias_tensor = std::get<std::shared_ptr<Tensor>>(layer_map->data["bias"]);
+        j_layer["bias"]["shape"] = bias_tensor->data->shape;
+        // --- FIX: Manually convert each BasicValue to a JSON value ---
+        nlohmann::json j_bias_data = nlohmann::json::array();
+        for (const auto& val : bias_tensor->data->data) {
+            j_bias_data.push_back(basic_to_json_value(val));
+        }
+        j_layer["bias"]["data"] = j_bias_data;
+
+        j_model.push_back(j_layer);
+    }
+
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        Error::set(12, vm.runtime_current_line, "Failed to open file for writing: " + filename);
+        return false;
+    }
+
+    outfile << j_model.dump(4); // pretty-print with 4-space indent
+    return true; // Success
+}
+
+/**
+ * @brief Loads a model from a JSON file.
+ * @param vm The interpreter instance.
+ * @param args Args from BASIC: filename_string
+ * @return A new model (Array of Maps) populated from the file.
+ */
+BasicValue builtin_load_model(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "LOAD_MODEL requires a single filename argument.");
+        return {};
+    }
+    if (!std::holds_alternative<std::string>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to LOAD_MODEL must be a string.");
+        return {};
+    }
+
+    const std::string filename = std::get<std::string>(args[0]);
+    std::ifstream infile(filename);
+    if (!infile) {
+        Error::set(6, vm.runtime_current_line, "Model file not found: " + filename);
+        return {};
+    }
+
+    nlohmann::json j_model;
+    try {
+        infile >> j_model;
+    }
+    catch (const nlohmann::json::parse_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid JSON format in model file. " + std::string(e.what()));
+        return {};
+    }
+
+    auto new_model_ptr = std::make_shared<Array>();
+    new_model_ptr->shape = { j_model.size() };
+
+    for (const auto& j_layer : j_model) {
+        auto layer_map = std::make_shared<Map>();
+        layer_map->data["type"] = j_layer["type"].get<std::string>();
+
+        // Load Weights
+        auto weights_tensor = std::make_shared<Tensor>();
+        auto weights_array = std::make_shared<Array>();
+        weights_array->shape = j_layer["weights"]["shape"].get<std::vector<size_t>>();
+        // --- FIX: Manually convert each JSON value back to a BasicValue ---
+        for (const auto& j_val : j_layer["weights"]["data"]) {
+            weights_array->data.push_back(json_to_basic_value(j_val));
+        }
+        weights_tensor->data = weights_array;
+        layer_map->data["weights"] = weights_tensor;
+
+        // Load Bias
+        auto bias_tensor = std::make_shared<Tensor>();
+        auto bias_array = std::make_shared<Array>();
+        bias_array->shape = j_layer["bias"]["shape"].get<std::vector<size_t>>();
+        // --- FIX: Manually convert each JSON value back to a BasicValue ---
+        for (const auto& j_val : j_layer["bias"]["data"]) {
+            bias_array->data.push_back(json_to_basic_value(j_val));
+        }
+        bias_tensor->data = bias_array;
+        layer_map->data["bias"] = bias_tensor;
+
+        new_model_ptr->data.push_back(layer_map);
+    }
+
+    return new_model_ptr;
+}
+
 
 // --- Arithmetic Functions ---
 
@@ -4224,13 +4609,17 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("APPEND", 2, builtin_append);
 
     // --- Register Tensor Functions
-    register_func("TOARRAY", 1, builtin_toarray);
-    register_func("TOTENSOR", 1, builtin_to_tensor);
-    register_proc("BACKWARD", 1, builtin_backward);
-    register_func("UPDATE", 2, builtin_update);
-    register_func("CREATE_LAYER", 2, builtin_create_layer);
-    register_func("CREATE_OPTIMIZER", 2, builtin_create_optimizer);
-    register_func("SIGMOID", 1, builtin_sigmoid);
+    register_func("TENSOR.TOARRAY", 1, builtin_toarray);
+    register_func("TENSOR.TOTENSOR", 1, builtin_to_tensor);
+    register_proc("TENSOR.BACKWARD", 1, builtin_backward);
+    register_func("TENSOR.UPDATE", 2, builtin_update);
+    register_func("TENSOR.CREATE_LAYER", 2, builtin_create_layer);
+    register_func("TENSOR.CREATE_OPTIMIZER", 2, builtin_create_optimizer);
+    register_func("TENSOR.SIGMOID", 1, builtin_sigmoid);
+    register_func("TENSOR.CONV2D", 5, builtin_conv2d);
+    register_func("TENSOR.MAXPOOL2D", 3, builtin_maxpool2d);
+    register_proc("TENSOR.SAVEMODEL", 2, builtin_save_model);
+    register_func("TENSOR.LOADMODEL", 1, builtin_load_model);
 
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);

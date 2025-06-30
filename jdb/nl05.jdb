@@ -9,8 +9,8 @@ TRAINING_INPUT_DATA = [[0,0], [0,1], [1,0], [1,1]]
 TRAINING_OUTPUT_DATA = [[0], [1], [1], [0]]
 
 ' Convert the data Arrays into Tensors to enable gradient tracking.
-TRAINING_INPUTS = TOTENSOR(TRAINING_INPUT_DATA)
-TRAINING_OUTPUTS = TOTENSOR(TRAINING_OUTPUT_DATA)
+TRAINING_INPUTS = TENSOR.TOTENSOR(TRAINING_INPUT_DATA)
+TRAINING_OUTPUTS = TENSOR.TOTENSOR(TRAINING_OUTPUT_DATA)
 
 
 ' --- 2. Model and Optimizer Setup ---
@@ -18,14 +18,14 @@ TRAINING_OUTPUTS = TOTENSOR(TRAINING_OUTPUT_DATA)
 ' Use the new factory functions to define the network architecture and optimizer.
 ' This is much cleaner than manually creating weight and bias arrays.
 MODEL = []
-L =  CREATE_LAYER("DENSE", {"input_size": 2, "units": 3})
+L =  TENSOR.CREATE_LAYER("DENSE", {"input_size": 2, "units": 3})
 PRINT L
 MODEL = APPEND(MODEL,L)
 
-MODEL = APPEND(MODEL, CREATE_LAYER("DENSE", {"input_size": 3, "units": 1}))
+MODEL = APPEND(MODEL, TENSOR.CREATE_LAYER("DENSE", {"input_size": 3, "units": 1}))
 
-OPTIMIZER = CREATE_OPTIMIZER("SGD", {"learning_rate": 0.1})
-EPOCHS = 20000
+OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": 0.1})
+EPOCHS = 10000
 
 
 ' --- 3. Helper Functions ---
@@ -42,7 +42,7 @@ FUNC MODEL_FORWARD(model_array, input_tensor)
         ' Apply the layer's logic
         temp_tensor = MATMUL(temp_tensor, weights) + bias
         ' Apply activation function. Note we no longer need SIGMOID_DERIVATIVE
-        temp_tensor = SIGMOID(temp_tensor)
+        temp_tensor = TENSOR.SIGMOID(temp_tensor)
     NEXT i
     RETURN temp_tensor
 ENDFUNC
@@ -52,7 +52,7 @@ FUNC MSE_LOSS(predicted, actual)
     squared_errors_tensor = errors ^ 2
     sum_of_squares_tensor = SUM(squared_errors_tensor)
     
-    num_elements = LEN(TOARRAY(errors))[0]
+    num_elements = LEN(TENSOR.TOARRAY(errors))[0]
     loss_tensor = sum_of_squares_tensor / num_elements
     RETURN loss_tensor
 ENDFUNC
@@ -73,21 +73,22 @@ FOR EPI = 1 TO EPOCHS
     
     ' --- BACKPROPAGATION ---
     ' This one command replaces all the manual derivative calculations!
-    BACKWARD LOSS_TENSOR
+    TENSOR.BACKWARD LOSS_TENSOR
 
     ' --- UPDATE WEIGHTS AND BIASES ---
     ' The optimizer handles applying all the gradients computed by BACKWARD.
-    MODEL = UPDATE(MODEL, OPTIMIZER)
+    MODEL = TENSOR.UPDATE(MODEL, OPTIMIZER)
 
     ' Print progress every 1000 epochs
     IF EPI MOD 1000 = 0 THEN
-        PRINT "Epoch:"; EPI; ", Loss:"; TOARRAY(LOSS_TENSOR)
+        PRINT "Epoch:"; EPI; ", Loss:"; TENSOR.TOARRAY(LOSS_TENSOR)
     ENDIF
 NEXT EPI
 
+TENSOR.SAVEMODEL model, "lall.jmd"
 
 PRINT
 PRINT "--- Training Complete ---"
 PRINT "Final Predictions:"
-PRINT FRMV$(TOARRAY(PREDICTED_OUTPUT))
+PRINT FRMV$(TENSOR.TOARRAY(PREDICTED_OUTPUT))
 
